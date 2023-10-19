@@ -35,7 +35,9 @@
   #:use-module (guix build-system emacs)
   #:use-module (guix build-system cargo)
   #:use-module (gnu packages python-check)
+  #:use-module (gnu packages tls)
   #:use-module (gnu packages java)
+  #:use-module (gnu packages llvm)
   #:use-module (gnu packages check)
   #:use-module (gnu packages guile)
   #:use-module (gnu packages autotools)
@@ -55,9 +57,11 @@
   #:use-module (gnu packages python-crypto)
   #:use-module (gnu packages python-web)
   #:use-module (gnu packages python-build)
+  #:use-module (gnu packages qt)
   #:use-module (gnu packages time)
   #:use-module (gnu packages bioinformatics)      ;python-intervaltree
-  #:use-module (gnu packages emulators))
+  #:use-module (gnu packages emulators)
+  #:use-module (engineering))
 
 (define-public blacksmith
   (package
@@ -289,7 +293,12 @@ produce your expressions in software.")
                      (add-after 'check 'make
                        (lambda _
                          (invoke "make"
-                                 (string-append "CAPSTONE_INC=" #$capstone "/include/capstone")))))))
+                                 (string-append "CAPSTONE_INC=" #$capstone "/include/capstone"))))
+		     (add-after 'install 'install-lib
+				(lambda* (#:key outputs #:allow-other-keys)
+				  (let ((lib (string-append (assoc-ref outputs "out") "/share/emacs/site-lisp/capstone-master")))
+				    (install-file "capstone-core.so" lib)
+				    (install-file "capstone-core.o" lib)))))))
     (home-page "https://github.com/anticomputer/emacs-capstone")
     (synopsis
      "This is a set of elisp bindings for the capstone dissassembly library")
@@ -297,3 +306,25 @@ produce your expressions in software.")
      "Provided because I think emacs has everything it needs to be a decent ASM navigation platform.")
     (license license:gpl2+)))
 
+(define-public iaito
+  (package
+    (name "iaito")
+    (version "master")
+    (source
+     (origin
+       (method git-fetch)
+       (uri (git-reference
+             (url "https://github.com/radareorg/iaito")
+             (commit version)))
+       (sha256
+        (base32 "1w0mxx1akiwfk1k6cv5bq3bspbfhhdh8nff8g9nij3r9ljkxvigy"))))
+    (build-system gnu-build-system)
+    (arguments `(#:tests? #f))
+    ;; (arguments `(#:configure-flags '("CC=clang" "CXX=clang++")))
+    (propagated-inputs (list qtbase qtsvg radare2 openssl))
+    (native-inputs (list pkg-config autoconf automake m4 qttools clang))
+    (home-page "https://github.com/radareorg/iaito")
+    (synopsis "iaito is the official graphical interface for radare2, a libre reverse engineering framework.")
+    (description
+     "iaito is the official graphical interface for radare2, a libre reverse engineering framework.")
+    (license license:gpl3+)))
