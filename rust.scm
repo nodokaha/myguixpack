@@ -706,15 +706,42 @@ safety and thread safety guarantees.")
   (rust-bootstrapped-package
    rust-1.67 "1.68.2" "15ifyd5jj8rd979dkakp887hgmhndr68pqaqvd2hqkfdywirqcwk"))
 
-(define rust-1.73
+
+(define rust-1.69
   (let ((base-rust (rust-bootstrapped-package
-		    rust-1.x68 "1.73.0" "0fmvn7vg3qg9xprgfwv10g3ygy8i4j4bkcxcr1xdy89d3xnjxmln")))
+		    rust-1.68 "1.69.0" "03zn7kx5bi5mdfsqfccj4h8gd6abm7spj0kjsfxwlv5dcwc9f1gv")))
     (package
      (inherit base-rust)
      (source
       (origin
        (inherit (package-source base-rust))
        (snippet #f))))))
+
+(define rust-1.70
+  (rust-bootstrapped-package
+   rust-1.69 "1.70.0" "0z6j7d0ni0rmfznv0w3mrf882m11kyh51g2bxkj40l3s1c0axgxj"))
+
+(define rust-1.71
+  (rust-bootstrapped-package
+   rust-1.70 "1.71.0" "18g3bd5hn43f3jq18i7h4abvb5h51sgzcmhid3mbcxhxnnxn37ga"))
+
+(define rust-1.72
+  (rust-bootstrapped-package
+   rust-1.71 "1.72.1" "18g3bd5hn43f3jq18i7h4abvb5h51sgzcmhid3mbcxhxnnxn37ga"))
+
+(define rust-1.73
+  (rust-bootstrapped-package
+   rust-1.72 "1.73.0" "18g3bd5hn43f3jq18i7h4abvb5h51sgzcmhid3mbcxhxnnxn37ga"))
+
+;; (define rust-1.70
+;;   (let ((base-rust (rust-bootstrapped-package
+;; 		    rust-1.68 "1.70.0" "18g3bd5hn43f3jq18i7h4abvb5h51sgzcmhid3mbcxhxnnxn37ga")))
+;;     (package
+;;      (inherit base-rust)
+;;      (source
+;;       (origin
+;;        (inherit (package-source base-rust))
+;;        (snippet #f))))))
 
 ;;; Note: Only the latest version of Rust is supported and tested.  The
 ;;; intermediate rusts are built for bootstrapping purposes and should not
@@ -724,14 +751,13 @@ safety and thread safety guarantees.")
 ;;; Here we take the latest included Rust, make it public, and re-enable tests
 ;;; and extra components such as rustfmt.
 (define-public rust
-  (let ((base-rust rust-1.73))
+  (let ((base-rust rust-1.70))
     (package
       (inherit base-rust)
       (outputs (cons "rustfmt" (package-outputs base-rust)))
       (arguments
        (substitute-keyword-arguments (package-arguments base-rust)
-         ((#:tests? _ #f)
-          (not (%current-target-system)))
+         ((#:tests? _ #f) #f)
          ((#:phases phases)
           `(modify-phases ,phases
              (add-after 'unpack 'relax-gdb-auto-load-safe-path
@@ -766,16 +792,16 @@ safety and thread safety guarantees.")
                     "#[ignore]\nfn finds_author_git")
                    (("fn finds_local_author_git")
                     "#[ignore]\nfn finds_local_author_git"))))
-             ;; (add-after 'unpack 'disable-tests-requiring-mercurial
-             ;;   (lambda _
-             ;;     (substitute*
-             ;;       "src/tools/cargo/tests/testsuite/init/simple_hg_ignore_exists/mod.rs"
-             ;;       (("fn simple_hg_ignore_exists")
-             ;;        "#[ignore]\nfn simple_hg_ignore_exists"))
-             ;;     (substitute*
-             ;;       "src/tools/cargo/tests/testsuite/init/mercurial_autodetect/mod.rs"
-             ;;       (("fn mercurial_autodetect")
-             ;;        "#[ignore]\nfn mercurial_autodetect"))))
+             (add-after 'unpack 'disable-tests-requiring-mercurial
+               (lambda _
+                 (substitute*
+                   "src/tools/cargo/tests/testsuite/init/simple_hg_ignore_exists/mod.rs"
+                   (("fn simple_hg_ignore_exists")
+                    "#[ignore]\nfn simple_hg_ignore_exists"))
+                 (substitute*
+                   "src/tools/cargo/tests/testsuite/init/mercurial_autodetect/mod.rs"
+                   (("fn mercurial_autodetect")
+                    "#[ignore]\nfn mercurial_autodetect"))))
              (add-after 'unpack 'disable-tests-broken-on-aarch64
                (lambda _
                  (with-directory-excursion "src/tools/cargo/tests/testsuite/"

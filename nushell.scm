@@ -38,7 +38,7 @@
 ;;; You should have received a copy of the GNU General Public License
 ;;; along with GNU Guix.  If not, see <http://www.gnu.org/licenses/>.
 
-(define-module (shells)
+(define-module (nushell)
   #:use-module (gnu packages)
   #:use-module (gnu packages autotools)
   #:use-module (gnu packages base)
@@ -71,7 +71,7 @@
   #:use-module (gnu packages xdisorg)
   #:use-module (gnu packages xorg)
   #:use-module (gnu packages texinfo)
-  #:use-module (guix build-system cargo)
+  #:use-module (cargo)
   #:use-module (guix build-system cmake)
   #:use-module (guix build-system gnu)
   #:use-module (guix build-system meson)
@@ -82,2038 +82,8 @@
   #:use-module (guix gexp)
   #:use-module ((guix licenses) #:prefix license:)
   #:use-module (guix packages)
-  #:use-module (guix utils))
-
-(define-public dash
-  (package
-    (name "dash")
-    (version "0.5.12")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (string-append "http://gondor.apana.org.au/~herbert/dash/files/"
-                           "dash-" version ".tar.gz"))
-       (sha256
-        (base32 "12pjm2j0q0q88nvqbcyqjwr8s1c29ilxyq2cdj8k42wbdv24liva"))
-       (modules '((guix build utils)))
-       (snippet
-        '(begin
-           ;; The man page hails from BSD, where (d)ash is the default shell.
-           ;; This isn't the case on Guix or indeed most other GNU systems.
-           (substitute* "src/dash.1"
-             (("the standard command interpreter for the system")
-              "a command interpreter based on the original Bourne shell"))))))
-    (build-system gnu-build-system)
-    (inputs
-     (list libedit))
-    (arguments
-     '(#:configure-flags '("--with-libedit")))
-    (home-page "http://gondor.apana.org.au/~herbert/dash")
-    (synopsis "POSIX-compliant shell optimised for size")
-    (description
-     "Dash is a POSIX-compliant @command{/bin/sh} implementation that aims to be
-as small as possible, often without sacrificing speed.  It is faster than the
-GNU Bourne-Again Shell (@command{bash}) at most scripted tasks.  Dash is a
-direct descendant of NetBSD's Almquist Shell (@command{ash}).")
-    (license (list license:bsd-3
-                   license:gpl2+))))    ; mksignames.c
-
-(define-public fish
-  (package
-    (name "fish")
-    (version "3.6.1")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (string-append "https://github.com/fish-shell/fish-shell/"
-                           "releases/download/" version "/"
-                           "fish-" version ".tar.xz"))
-       (sha256
-        (base32 "1cj91fyba259vhbxvq55w2yf2p2vj201gr15pa59swx6gjs2nh2m"))))
-    (build-system cmake-build-system)
-    (inputs
-     (list fish-foreign-env ncurses pcre2
-           python))  ; for fish_config and manpage completions
-    (native-inputs
-     (list doxygen groff ; for 'fish --help'
-           procps))             ; for the test suite
-    (arguments
-     '(#:phases
-       (modify-phases %standard-phases
-         (add-after 'unpack 'set-env
-           (lambda _
-             ;; some tests write to $HOME
-             (setenv "HOME" (getcwd))
-             #t))
-         (add-after 'unpack 'patch-tests
-           (lambda* (#:key inputs #:allow-other-keys)
-             (let ((coreutils (assoc-ref inputs "coreutils"))
-                   (bash (assoc-ref inputs "bash")))
-               ;; This test sporadically fails in the build container
-               ;; because of leftover zombie processes, which are not
-               ;; reaped automatically:
-;; "Found existing zombie processes. Clean up zombies before running this test."
-               ;; Disabling parallel tests does not reliably prevent it.
-               (delete-file "tests/checks/jobs.fish")
-               ;; This test fails.
-               (delete-file "tests/checks/pipeline-pgroup.fish")
-               ;; This one tries to open a terminal & can't simply be deleted.
-               (substitute* "cmake/Tests.cmake"
-                 ((".* interactive\\.fish.*") ""))
-               ;; This one needs to chdir successfully.
-               (substitute* "tests/checks/vars_as_commands.fish"
-                 (("/usr/bin") "/tmp"))
-               ;; These contain absolute path references.
-               (substitute* "src/fish_tests.cpp"
-                 (("/bin/echo" echo) (string-append coreutils echo))
-                 (("/bin/ca" ca) (string-append coreutils ca))
-                 (("\"(/bin/c)\"" _ c) (string-append "\"" coreutils c "\""))
-                 (("/bin/ls_not_a_path" ls-not-a-path)
-                  (string-append coreutils ls-not-a-path))
-                 (("/bin/ls" ls) (string-append coreutils ls))
-                 (("(/bin/)\"" _ bin) (string-append coreutils bin "\""))
-                 (("/bin -" bin) (string-append coreutils bin))
-                 (((string-append
-                    "do_test\\(is_potential_path\\("
-                    "L\"/usr\", wds, vars, PATH_REQUIRE_DIR\\)\\);"))
-                  "")
-                 ;; Not all mentions of /usr... need to exist, but these do.
-                 (("\"/usr(|/lib)\"" _ subdirectory)
-                  (string-append "\"/tmp" subdirectory "\"")))
-               (substitute*
-                 (append (find-files "tests" ".*\\.(in|out|err)$")
-                         (find-files "tests/checks" ".*\\.fish"))
-                 (("/bin/pwd" pwd) (string-append coreutils pwd))
-                 (("/bin/echo" echo) (string-append coreutils echo))
-                 (("/bin/sh" sh) (string-append bash sh))
-                 (("/bin/ls" ls) (string-append coreutils ls)))
-               (substitute* (find-files "tests" ".*\\.(in|out|err)$")
-                 (("/usr/bin") (string-append coreutils "/bin")))
-               #t)))
-         ;; Source /etc/fish/config.fish from $__fish_sysconf_dir/config.fish.
-         (add-after 'patch-tests 'patch-fish-config
-           (lambda _
-             (let ((port (open-file "etc/config.fish" "a")))
-               (display (string-append
-                         "\n\n"
-                         "# Patched by Guix.\n"
-                         "# Source /etc/fish/config.fish.\n"
-                         "if test -f /etc/fish/config.fish\n"
-                         "    source /etc/fish/config.fish\n"
-                         "end\n")
-                        port)
-               (close-port port))
-             #t))
-         ;; Embed absolute paths.
-         (add-before 'install 'embed-absolute-paths
-           (lambda _
-             (substitute* "share/functions/__fish_print_help.fish"
-               (("nroff") (which "nroff")))
-             #t))
-         ;; Enable completions, functions and configurations in user's and
-         ;; system's guix profiles by adding them to __extra_* variables.
-         (add-before 'install 'patch-fish-extra-paths
-           (lambda _
-             (let ((port (open-file "share/__fish_build_paths.fish" "a")))
-               (display
-                (string-append
-                 "\n\n"
-                 "# Patched by Guix.\n"
-                 "# Enable completions, functions and configurations in user's"
-                 " and system's guix profiles by adding them to __extra_*"
-                 " variables.\n"
-                 "set -l __guix_profile_paths ~/.guix-profile"
-                 " /run/current-system/profile\n"
-                 "set __extra_completionsdir"
-                 " $__guix_profile_paths\"/etc/fish/completions\""
-                 " $__guix_profile_paths\"/share/fish/vendor_completions.d\""
-                 " $__extra_completionsdir\n"
-                 "set __extra_functionsdir"
-                 " $__guix_profile_paths\"/etc/fish/functions\""
-                 " $__guix_profile_paths\"/share/fish/vendor_functions.d\""
-                 " $__extra_functionsdir\n"
-                 "set __extra_confdir"
-                 " $__guix_profile_paths\"/etc/fish/conf.d\""
-                 " $__guix_profile_paths\"/share/fish/vendor_conf.d\""
-                 " $__extra_confdir\n")
-                port)
-               (close-port port))
-             #t))
-         ;; Use fish-foreign-env to source /etc/profile.
-         (add-before 'install 'source-etc-profile
-           (lambda* (#:key inputs #:allow-other-keys)
-             (let ((port (open-file "share/__fish_build_paths.fish" "a")))
-               (display
-                (string-append
-                 "\n\n"
-                 "# Patched by Guix.\n"
-                 "# Use fish-foreign-env to source /etc/profile.\n"
-                 "if status is-login\n"
-                 "    set fish_function_path "
-                 (assoc-ref inputs "fish-foreign-env") "/share/fish/functions"
-                 " $__fish_datadir/functions\n"
-                 "    fenv source /etc/profile\n"
-                 "    set -e fish_function_path\n"
-                 "end\n")
-                port)
-               (close-port port))
-             #t)))))
-    (synopsis "The friendly interactive shell")
-    (description
-     "Fish (friendly interactive shell) is a shell focused on interactive use,
-discoverability, and friendliness.  Fish has very user-friendly and powerful
-tab-completion, including descriptions of every completion, completion of
-strings with wildcards, and many completions for specific commands.  It also
-has extensive and discoverable help.  A special @command{help} command gives
-access to all the fish documentation in your web browser.  Other features
-include smart terminal handling based on terminfo, an easy to search history,
-and syntax highlighting.")
-    (home-page "https://fishshell.com/")
-    (license license:gpl2)))
-
-(define-public fish-foreign-env
-  (package
-    (name "fish-foreign-env")
-    (version "0.20190116")
-    (source
-     (origin
-       (method git-fetch)
-       (uri (git-reference
-             (url "https://github.com/oh-my-fish/plugin-foreign-env")
-             (commit "dddd9213272a0ab848d474d0cbde12ad034e65bc")))
-       (file-name (git-file-name name version))
-       (sha256
-        (base32 "00xqlyl3lffc5l0viin1nyp819wf81fncqyz87jx8ljjdhilmgbs"))))
-    (build-system trivial-build-system)
-    (arguments
-     '(#:modules ((guix build utils))
-       #:builder
-       (begin
-         (use-modules (guix build utils))
-         (let* ((source (assoc-ref %build-inputs "source"))
-                (out (assoc-ref %outputs "out"))
-                (func-path (string-append out "/share/fish/functions")))
-           (mkdir-p func-path)
-           (copy-recursively (string-append source "/functions")
-                             func-path)
-
-           ;; Embed absolute paths.
-           (substitute* `(,(string-append func-path "/fenv.fish")
-                          ,(string-append func-path "/fenv.apply.fish")
-                          ,(string-append func-path "/fenv.main.fish"))
-             (("bash")
-              (search-input-file %build-inputs "/bin/bash"))
-             (("sed")
-              (search-input-file %build-inputs "/bin/sed"))
-             ((" tr ")
-              (string-append " "
-                             (search-input-file %build-inputs "/bin/tr")
-                             " ")))))))
-    (inputs
-     (list bash coreutils sed))
-    (home-page "https://github.com/oh-my-fish/plugin-foreign-env")
-    (synopsis "Foreign environment interface for fish shell")
-    (description "@code{fish-foreign-env} wraps bash script execution in a way
-that environment variables that are exported or modified get imported back
-into fish.")
-    (license license:expat)))
-
-(define-public rc
-  (package
-    (name "rc")
-    (version "1.7.4")
-    (source (origin
-              (method git-fetch)
-              (uri (git-reference
-                    (url "https://github.com/rakitzis/rc")
-                    (commit (string-append "v" version))))
-              (sha256
-               (base32
-                "0vj1h4pcg13vxsiydmmk87dr2sra9h4gwx0c4q6fjsiw4in78rrd"))
-              (file-name (git-file-name name version))))
-    (build-system gnu-build-system)
-    (arguments
-     `(#:configure-flags
-       '("--with-edit=gnu")
-       #:phases
-       (modify-phases %standard-phases
-         (add-before 'bootstrap 'patch-trip.rc
-          (lambda _
-            (substitute* "trip.rc"
-              (("/bin/pwd") (which "pwd"))
-              (("/bin/sh")  (which "sh"))
-              (("/bin/rm")  (which "rm"))
-              (("/bin\\)")  (string-append (dirname (which "rm")) ")")))
-            #t)))))
-    (inputs (list readline perl))
-    (native-inputs (list autoconf automake libtool pkg-config))
-    (synopsis "Alternative implementation of the rc shell by Byron Rakitzis")
-    (description
-     "This is a reimplementation by Byron Rakitzis of the Plan 9 shell.  It
-has a small feature set similar to a traditional Bourne shell.")
-    (home-page "https://github.com/rakitzis/rc")
-    (license license:zlib)))
-
-(define-public es
-  (package
-    (name "es")
-    (version "0.9.2")
-    (source
-     (origin
-       (method url-fetch/tarbomb)
-       (uri (string-append "https://github.com/wryun/es-shell/releases/"
-                           "download/v" version "/es-" version ".tar.gz"))
-       (sha256
-        (base32 "1pgmqhsk14wyvl489sxdy7kdl2gwrsq1xvkip0z90kh888mlh9n9"))
-       (file-name (string-append name "-" version ".tar.gz"))))
-    (build-system gnu-build-system)
-    (arguments
-     (list #:test-target "test"))
-    (inputs
-     (list readline))
-    (native-inputs
-     (list bison))
-    (synopsis "Extensible shell with higher-order functions")
-    (description
-     "Es is an extensible shell.  The language was derived from the Plan 9
-shell, rc, and was influenced by functional programming languages, such as
-Scheme, and the Tcl embeddable programming language.  This implementation is
-derived from Byron Rakitzis's public domain implementation of rc, and was
-written by Paul Haahr and Byron Rakitzis.")
-    (home-page "https://wryun.github.io/es-shell/")
-    (license license:public-domain)))
-
-(define-public tcsh
-  (package
-    (name "tcsh")
-    (version "6.24.01")
-    (source (origin
-              (method url-fetch)
-              ;; Old tarballs are moved to old/.
-              (uri (list (string-append "https://astron.com/pub/tcsh/"
-                                        "tcsh-" version ".tar.gz")
-                         (string-append "https://astron.com/pub/tcsh/"
-                                        "old/tcsh-" version ".tar.gz")))
-              (sha256
-               (base32
-                "0zhxp4m1fxyd3a2qyvs97gzlrb0h0ah1gjrqcbilgydiffws2nan"))
-              (patches (search-patches "tcsh-fix-autotest.patch"))
-              (patch-flags '("-p0"))))
-    (build-system gnu-build-system)
-    (native-inputs
-     (append (if (target-riscv64?)
-                 (list config)
-                 '())
-             (list autoconf perl)))
-    (inputs
-     (list ncurses))
-    (arguments
-     (list
-      #:phases
-      #~(modify-phases %standard-phases
-          #$@(if (%current-target-system)
-                 #~((add-before 'configure 'set-cross-cc
-                      (lambda _
-                        (substitute* "configure"
-                          (("CC_FOR_GETHOST=\"cc\"")
-                           "CC_FOR_GETHOST=\"gcc\"")))))
-                 #~())
-          #$@(if (system-hurd?)
-                 #~((add-after 'unpack 'skip-tests
-                      (lambda _
-                        (substitute* "tests/testsuite.at"
-                          (("m4_include\\(\\[subst.at\\]\\)" all)
-                           (string-append "# " all))))))
-                 #~())
-          (add-before 'check 'patch-test-scripts
-            (lambda _
-              ;; Take care of pwd
-              (substitute* '("tests/commands.at" "tests/variables.at")
-                (("/bin/pwd") (which "pwd")))
-              (substitute* "Makefile"
-                ;; Likewise for /usr/bin/env.
-                (("/usr/bin/env") "env")
-                ;; Don't reset the environment (PATH, etc).
-                (("\\$\\(ENVCMD\\) -") "$(ENVCMD)"))
-              ;; This test does not expect the home directory from
-              ;; /etc/passwd to be '/'.
-              (substitute* "tests/subst.at"
-                (("\\$\\(id -un\\)/foo")
-                 "$(id -un)//foo"))
-              ;; The .at files create shell scripts without shebangs. Erk.
-              (substitute* "tests/commands.at"
-                (("./output.sh") "/bin/sh output.sh"))
-              (substitute* "tests/syntax.at"
-                (("; other_script.csh") "; /bin/sh other_script.csh"))
-              ;; Now, let's generate the test suite and patch it
-              (invoke "make" "tests/testsuite")
-
-              ;; This file is ISO-8859-1 encoded.
-              (with-fluids ((%default-port-encoding #f))
-                (substitute* "tests/testsuite"
-                  (("/bin/sh") (which "sh"))))))
-          (add-after 'install 'post-install
-            (lambda _
-              (with-directory-excursion (string-append #$output "/bin")
-                (symlink "tcsh" "csh")))))))
-    (home-page "https://www.tcsh.org/")
-    (synopsis "Unix shell based on csh")
-    (description
-     "Tcsh is an enhanced, but completely compatible version of the Berkeley
-UNIX C shell (csh).  It is a command language interpreter usable both as an
-interactive login shell and a shell script command processor.  It includes a
-command-line editor, programmable word completion, spelling correction, a
-history mechanism, job control and a C-like syntax.")
-    (license license:bsd-4)))
-
-(define-public zsh
-  (package
-    (name "zsh")
-    (version "5.9")
-    (source (origin
-              (method url-fetch)
-              (uri (list (string-append
-                           "https://www.zsh.org/pub/zsh-" version
-                           ".tar.xz")
-                         (string-append
-                           "https://www.zsh.org/pub/old/zsh-" version
-                           ".tar.xz")))
-              (sha256
-               (base32
-                "1mdc8lnq8qxq1ahxp8610n799pd7a9kqg3liy7xq2pjvvp71x3cv"))
-              (patches (search-patches "zsh-egrep-failing-test.patch"))))
-    (build-system gnu-build-system)
-    (arguments `(#:configure-flags
-                 `("--with-tcsetpgrp"
-                  "--enable-pcre"
-                  "--enable-maildir-support"
-                  ;; share/zsh/site-functions isn't populated
-                  "--disable-site-fndir"
-                  ,(string-append
-                    "--enable-additional-fpath="
-                    "/usr/local/share/zsh/site-functions," ; for foreign OS
-                    "/run/current-system/profile/share/zsh/site-functions"))
-                 #:phases
-                 (modify-phases %standard-phases
-                   (add-before 'configure 'fix-sh
-                     (lambda _
-                       ;; Some of the files are ISO-8859-1 encoded.
-                       (with-fluids ((%default-port-encoding #f))
-                                    (substitute*
-                                        '("configure"
-                                          "configure.ac"
-                                          "Src/exec.c"
-                                          "Src/mkmakemod.sh"
-                                          "Config/installfns.sh"
-                                          "Config/defs.mk.in"
-                                          "Test/E01options.ztst"
-                                          "Test/A05execution.ztst"
-                                          "Test/A01grammar.ztst"
-                                          "Test/A06assign.ztst"
-                                          "Test/B02typeset.ztst"
-                                          "Completion/Unix/Command/_init_d"
-                                          "Util/preconfig")
-                                      (("/bin/sh") (which "sh"))))))
-                   (add-before 'check 'patch-test
-                     (lambda _
-                       ;; In Zsh, `command -p` searches a predefined set of
-                       ;; paths that don't exist in the build environment. See
-                       ;; the assignment of 'path' in Src/init.c'
-                       (substitute* "Test/A01grammar.ztst"
-                         (("command -pv") "command -v")
-                         (("command -p") "command ")
-                         (("'command' -p") "'command' "))))
-                   (add-after 'build 'make-info
-                     (lambda _ (invoke "make" "info")))
-                   (add-after 'build 'install-info
-                     (lambda _ (invoke "make" "install.info"))))))
-    (native-inputs (list autoconf texinfo))
-    (inputs (list ncurses pcre perl))
-    (synopsis "Powerful shell for interactive use and scripting")
-    (description "The Z shell (zsh) is a Unix shell that can be used
-as an interactive login shell and as a powerful command interpreter
-for shell scripting.  Zsh can be thought of as an extended Bourne shell
-with a large number of improvements, including some features of bash,
-ksh, and tcsh.")
-    (home-page "https://www.zsh.org/")
-
-    ;; The whole thing is under an MIT/X11-style license, but there's one
-    ;; command, 'Completion/Unix/Command/_darcs', which is under GPLv2+.
-    (license license:gpl2+)))
-
-(define-public xonsh
-  (package
-    (name "xonsh")
-    (version "0.14.0")
-    (source
-      (origin
-        (method url-fetch)
-        (uri (pypi-uri "xonsh" version))
-        (sha256
-          (base32
-           "1wcv1sk8igs5kb9fqb8njbxwiqbwzpn0kdx9xkaddq3wn6msma25"))
-        (modules '((guix build utils)))
-        (snippet
-         #~(begin
-             (substitute* "setup.py"
-               (("\"xonsh\\.ply\\.ply\",") ""))
-             ;; Use our properly packaged PLY instead.
-             (substitute* (list "setup.py"
-                                "tests/test_lexer.py"
-                                "xonsh/lexer.py"
-                                "xonsh/parsers/base.py"
-                                "xonsh/parsers/completion_context.py"
-                                "xonsh/xonfig.py")
-               (("from xonsh\\.ply\\.(.*) import" _ module)
-                (format #f "from ~a import" module))
-               (("from xonsh\\.ply import") "import"))
-             #t))))
-    (build-system python-build-system)
-    (arguments
-     (list ;; TODO Try running run the test suite.
-           ;; See 'requirements-tests.txt' in the source distribution for more
-           ;; information.
-           #:tests? #f
-           #:phases
-           #~(modify-phases %standard-phases
-               (replace 'install
-                 (lambda* (#:key outputs #:allow-other-keys)
-                   (let* ((out (assoc-ref outputs "out")))
-                     (invoke "python" "-m" "compileall"
-                             "--invalidation-mode=unchecked-hash" out)
-                     (invoke "python" "setup.py" "install" "--root=/"
-                             (string-append "--prefix=" out))))))))
-    (native-inputs
-     (list python-setuptools                      ;needed at build time
-           python-wheel))
-    (inputs
-     (list python-distro
-           python-ply
-           python-prompt-toolkit
-           python-pygments
-           python-pyperclip
-           python-setproctitle))
-    (home-page "https://xon.sh/")
-    (synopsis "Python-ish shell")
-    (description
-     "Xonsh is a Python-ish, BASHwards-looking shell language and command
-prompt.  The language is a superset of Python 3.4+ with additional shell
-primitives that you are used to from Bash and IPython.  It works on all major
-systems including Linux, Mac OSX, and Windows.  Xonsh is meant for the daily
-use of experts and novices alike.")
-    (license license:bsd-2)))
-
-(define-public scsh
-  (let ((commit "4acf6e4ed7b65b46186ef0c9c2a1e10bef8dc052")
-        (revision "0"))
-    (package
-      (name "scsh")
-      (version (git-version "0.7" revision commit))
-      (source
-       (origin
-         (method git-fetch)
-         (uri (git-reference
-               (url "https://github.com/scheme/scsh")
-               (commit commit)))
-         (file-name (git-file-name name version))
-         (sha256
-          (base32
-           "1czrp808v5gs0ci5lmkp3wr3gfkrb3vd5b2iw2hz1bpqgaf6bxpv"))
-         (patches (search-patches "scsh-nonstring-search-path.patch"))))
-      (build-system gnu-build-system)
-      (arguments
-       (list
-        #:test-target "test"
-        #:phases
-        #~(modify-phases %standard-phases
-            (add-before 'configure 'replace-rx
-              (lambda _
-                (let ((rxpath (string-append #$scheme48-rx
-                                             "/share/scheme48-"
-                                             #$(package-version scheme48)
-                                             "/rx")))
-                  (delete-file-recursively "rx")
-                  (symlink rxpath "rx")))))))
-      (inputs
-       (list scheme48 scheme48-rx))
-      (native-inputs
-       (list autoconf automake))
-      (native-search-paths
-       (list (search-path-specification
-               (variable "SCSH_LIB_DIRS")
-               (separator " ")
-               (files '("share/scsh-0.7")))))
-      (home-page "https://github.com/scheme/scsh")
-      (synopsis "Unix shell embedded in Scheme")
-      (description
-       "Scsh is a Unix shell embedded in Scheme.  Scsh has two main
-components: a process notation for running programs and setting up pipelines
-and redirections, and a complete syscall library for low-level access to the
-operating system.")
-      (license license:bsd-3))))
-
-(define-public linenoise
-  (let ((commit "93b2db9bd4968f76148dd62cdadf050ed50b84b3")
-        (revision "2"))
-    (package
-      (name "linenoise")
-      (version (string-append "1.0-" revision "." (string-take commit 7)))
-      (source
-       (origin
-         (method git-fetch)
-         (uri (git-reference
-               (url "https://github.com/antirez/linenoise")
-               (commit commit)))
-         (file-name (string-append name "-" version "-checkout"))
-         (sha256
-          (base32
-           "102gwq6bzjq2b1lf55wrpgym58yfhry56hkajbj339m0bs1xijhs"))))
-      (build-system gnu-build-system)
-      (arguments
-       `(#:tests? #f                    ; no tests are included
-         #:make-flags
-         (list ,(string-append "CC=" (cc-for-target)))
-         #:phases
-         (modify-phases %standard-phases
-           (delete 'configure)
-           (replace 'install
-             (lambda* (#:key outputs #:allow-other-keys)
-               ;; At the moment there is no 'make install' in upstream.
-               (let* ((out (assoc-ref outputs "out")))
-                 (install-file "linenoise.h"
-                               (string-append out "/include/linenoise"))
-                 (install-file "linenoise.c"
-                               (string-append out "/include/linenoise"))
-                 #t))))))
-      (home-page "https://github.com/antirez/linenoise")
-      (synopsis "Minimal zero-config readline replacement")
-      (description
-       "Linenoise is a minimal, zero-config, readline replacement.
-Its features include:
-
-@enumerate
-@item Single and multi line editing mode with the usual key bindings
-@item History handling
-@item Completion
-@item Hints (suggestions at the right of the prompt as you type)
-@item A subset of VT100 escapes, ANSI.SYS compatible
-@end enumerate\n")
-      (license license:bsd-2))))
-
-(define-public s-shell
-  (let ((commit "da2e5c20c0c5f477ec3426dc2584889a789b1659")
-        (revision "2"))
-    (package
-      (name "s-shell")
-      (version (git-version "0.0.0" revision commit))
-      (source
-       (origin
-         (method git-fetch)
-         (uri (git-reference
-               (url "https://github.com/rain-1/s")
-               (commit commit)))
-         (file-name (string-append name "-" version "-checkout"))
-         (sha256
-          (base32
-           "0qiny71ww5nhzy4mnc8652hn0mlxyb67h333gbdxp4j4qxsi13q4"))))
-      (build-system gnu-build-system)
-      (inputs
-       (list linenoise))
-      (arguments
-       `(#:tests? #f
-         #:make-flags (list "CC=gcc"
-                            (string-append "PREFIX="
-                                           (assoc-ref %outputs "out")))
-         #:phases
-         (modify-phases %standard-phases
-           (add-after 'unpack 'install-directory-fix
-             (lambda* (#:key outputs #:allow-other-keys)
-               (let* ((out (assoc-ref outputs "out"))
-                      (bin (string-append out "/bin")))
-                 (substitute* "Makefile"
-                   (("out") bin))
-                 #t)))
-           (add-after 'install 'manpage
-             (lambda* (#:key outputs #:allow-other-keys)
-               (install-file "s.1" (string-append (assoc-ref outputs "out")
-                                                  "/share/man/man1"))))
-           (replace 'configure
-             (lambda* (#:key inputs outputs #:allow-other-keys)
-               ;; At this point linenoise is meant to be included,
-               ;; so we have to really copy it into the working directory
-               ;; of s.
-               (let* ((linenoise (assoc-ref inputs "linenoise"))
-                      (noisepath (string-append linenoise "/include/linenoise"))
-                      (out (assoc-ref outputs "out")))
-                 (copy-recursively noisepath "linenoise")
-                 (substitute* "s.c"
-                   (("/bin/s") (string-append out "/bin/s")))
-                 #t))))))
-      (home-page "https://github.com/rain-1/s")
-      (synopsis "Extremely minimal shell with the simplest syntax possible")
-      (description
-       "S is a new shell that aims to be extremely simple.  It does not
-implement the POSIX shell standard.
-
-There are no globs or \"splatting\" where a variable $FOO turns into multiple
-command line arguments.  One token stays one token forever.
-This is a \"no surprises\" straightforward approach.
-
-There are no redirection operators > in the shell language, they are added as
-extra programs.  > is just another unix command, < is essentially cat(1).
-A @code{andglob} program is also provided along with s.")
-      (license license:bsd-3))))
-
-(define-public oksh
-  (package
-    (name "oksh")
-    (version "0.5.9")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (string-append "https://connochaetos.org/oksh/oksh-"
-                           version ".tar.gz"))
-       (sha256
-        (base32
-         "0ln9yf6pxngsviqszv8klnnvn8vcpplvj1njdn8xr2y8frkbw8r3"))))
-    (build-system gnu-build-system)
-    (arguments
-     `(; The test files are not part of the distributed tarball.
-       #:tests? #f))
-    (home-page "https://connochaetos.org/oksh")
-    (synopsis "Port of OpenBSD Korn Shell")
-    (description
-     "Oksh is a port of the OpenBSD Korn Shell.
-The OpenBSD Korn Shell is a cleaned up and enhanced ksh.")
-    (license license:gpl3+)))
-
-(define-public loksh
-  (package
-    (name "loksh")
-    (version "7.3")
-    (source (origin
-              (method git-fetch)
-              (uri (git-reference
-                    (url "https://github.com/dimkr/loksh")
-                    (commit version)
-                    ;; Include the ‘lolibc’ submodule, a static compatibility library
-                    ;; created for and currently used only by loksh.
-                    (recursive? #t)))
-              (file-name (git-file-name name version))
-              (sha256
-               (base32
-                "1miydvb79wagckchinp189l8i81f08lqajg5jngn77m4x4gwjf3n"))))
-    (build-system meson-build-system)
-    (inputs (list ncurses))
-    (native-inputs (list pkg-config))
-    (arguments
-     `(#:tests? #f)) ;no tests included
-    (home-page "https://github.com/dimkr/loksh")
-    (synopsis "Korn Shell from OpenBSD")
-    (description
-     "loksh is a Linux port of OpenBSD's @command{ksh}.  It is a small,
-interactive POSIX shell targeted at resource-constrained systems.")
-    ;; The file 'LEGAL' says it is the public domain, and the 2
-    ;; exceptions which are listed are not included in this port.
-    (license license:public-domain)))
-
-(define-public mksh
-  (package
-    (name "mksh")
-    (version "59c")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (string-append "https://www.mirbsd.org/MirOS/dist/mir/mksh/mksh-R"
-                           version ".tgz"))
-       (sha256
-        (base32 "01n5ggw33bw4jv4d3148wlw9n4aj7vdn3ffnc66c9w9pldjidbkp"))))
-    (build-system gnu-build-system)
-    (arguments
-     `(#:tests? #f                      ; tests require access to /dev/tty
-       #:phases
-       (modify-phases %standard-phases
-         (delete 'configure)
-         (replace 'build
-           (lambda _
-             (setenv "CC" "gcc")
-             (invoke (which "sh") "Build.sh")))
-         (replace 'install
-           (lambda* (#:key outputs #:allow-other-keys)
-             (let* ((out (assoc-ref outputs "out"))
-                    (bin (string-append out "/bin"))
-                    (man (string-append out "/share/man/man1")))
-               (install-file "mksh" bin)
-               (with-directory-excursion bin
-                 (symlink "mksh" "ksh"))
-               (install-file "mksh.1" man)))))))
-    (home-page "https://www.mirbsd.org/mksh.htm")
-    (synopsis "Korn Shell from MirBSD")
-    (description "mksh is an actively developed free implementation of the
-Korn Shell programming language and a successor to the Public Domain Korn
-Shell (pdksh).")
-    (license (list license:miros
-                   license:isc))))              ; strlcpy.c
-
-(define-public oil
-  (package
-    (name "oil")
-    (version "0.17.0")
-    (source
-     ;; oil's sources contain a modified version of CPython 2.7.13.
-     ;; According to https://www.oilshell.org/blog/2017/05/05.html
-     ;; this bundles version of CPython had certain unused parts removed
-     ;; and its build system has been replaced by a custom one.
-     ;; This would probably make it quite complicated to replace the
-     ;; bundled CPython with the one from the python2 package.
-     (origin
-       (method url-fetch)
-       (uri (string-append "https://www.oilshell.org/download/oil-"
-                           version ".tar.gz"))
-       (sha256
-        (base32 "01b67dq56iam44d7c81ba9w62jjnjx2z7wm928rkc1ff6bacm37r"))))
-    (build-system gnu-build-system)
-    (arguments
-     (list #:strip-binaries? #f         ; strip breaks the binary
-           #:phases
-           #~(modify-phases %standard-phases
-               (replace 'configure
-                 (lambda _
-                   (setenv "CC" #$(cc-for-target))
-                   (substitute* "configure"
-                     ((" cc ") " $CC "))
-                   (invoke "./configure" (string-append "--prefix=" #$output)
-                           "--with-readline")))
-               (replace 'check
-                 ;; The tests are not distributed in the tarballs but upstream
-                 ;; recommends running this smoke test.
-                 ;; https://github.com/oilshell/oil/blob/release/0.8.0/INSTALL.txt#L38-L48
-                 (lambda* (#:key tests? #:allow-other-keys)
-                   (when tests?
-                     (let* ((oil "_bin/oil.ovm"))
-                       (invoke/quiet oil "osh" "-c" "echo hi")
-                       (invoke/quiet oil "osh" "-n" "configure"))))))))
-    (inputs
-     (list readline))
-    (home-page "https://www.oilshell.org")
-    (synopsis "Programming language and Bash-compatible Unix shell")
-    (description "Oil is a programming language with automatic translation for
-Bash.  It includes osh, a Unix/POSIX shell that runs unmodified Bash
-scripts.")
-    (license (list license:psfl                 ; tarball includes python2.7
-                   license:asl2.0))))
-
-(define-public gash
-  (package
-    (name "gash")
-    (version "0.3.0")
-    (source
-     (origin (method url-fetch)
-             (uri (string-append "mirror://savannah/gash/gash-"
-                                 version ".tar.gz"))
-             (sha256
-              (base32
-               "1af2jz4a6rzsshi379wzw4b8d04zvfamdhfzip2pgmk821lyqsjl"))))
-    (build-system gnu-build-system)
-    (native-inputs
-     (list pkg-config))
-    (inputs
-     (list guile-3.0))
-    (home-page "https://savannah.nongnu.org/projects/gash/")
-    (synopsis "POSIX-compatible shell written in Guile Scheme")
-    (description "Gash is a POSIX-compatible shell written in Guile
-Scheme.  It provides both the shell interface, as well as a Guile
-library for parsing shell scripts.  Gash is designed to bootstrap Bash
-as part of the Guix bootstrap process.")
-    (license license:gpl3+)))
-
-(define-public gash-utils
-  (package
-    (name "gash-utils")
-    (version "0.2.0")
-    (source (origin
-              (method url-fetch)
-              (uri (string-append "mirror://savannah/gash/gash-utils-"
-                                  version ".tar.gz"))
-              (sha256
-               (base32
-                "18ylb54l9lmaynapbncc1zhbsirhihznrxihhxgqrpqgyjkfbap6"))))
-    (build-system gnu-build-system)
-    (native-inputs
-     (list pkg-config))
-    (inputs
-     (list guile-3.0 gash))
-    (home-page "https://savannah.nongnu.org/projects/gash/")
-    (synopsis "Core POSIX utilities written in Guile Scheme")
-    (description "Gash-Utils provides Scheme implementations of many
-common POSIX utilities (there are about 40 of them, ranging in
-complexity from @command{false} to @command{awk}).  The utilities are
-designed to be capable of bootstrapping their standard GNU counterparts.
-Underpinning these utilities are many Scheme interfaces for manipulating
-files and text.")
-    (license license:gpl3+)))
-
-(define-public nushell
-  (package
-    (name "nushell")
-    (version "0.85.0")
-    (source
-     (origin
-       (method git-fetch)
-       (uri (git-reference
-             (url "https://github.com/nushell/nushell")
-             (commit version)))
-       (file-name (git-file-name name version))
-       (sha256
-        (base32 "0w9g3ifsymcallw8ppmi747qrbcf6js8mfs41wskxy8k097ckkgx"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:tests? #false                  ;missing files
-       #:features '("extra")
-       #:cargo-inputs
-       (("rust-ctrlc" ,rust-ctrlc-3)
-        ("rust-futures" ,rust-futures-0.3)
-        ("rust-itertools" ,rust-itertools-0.10)
-        ("rust-mp4" ,rust-mp4-0.9)
-        ("rust-nu-cli" ,rust-nu-cli-0.85)
-        ("rust-nu-command" ,rust-nu-command-0.85)
-        ("rust-nu-completion" ,rust-nu-completion-0.85)
-        ("rust-nu-data" ,rust-nu-data-0.85)
-        ("rust-nu-engine" ,rust-nu-engine-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-parser" ,rust-nu-parser-0.85)
-        ("rust-nu-path" ,rust-nu-path-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-value-ext" ,rust-nu-value-ext-0.85)
-        ("rust-nu-plugin-binaryview" ,rust-nu-plugin-binaryview-0.85)
-        ("rust-nu-plugin-chart" ,rust-nu-plugin-chart-0.85)
-        ("rust-nu-plugin-from-bson" ,rust-nu-plugin-from-bson-0.85)
-        ("rust-nu-plugin-from-sqlite" ,rust-nu-plugin-from-sqlite-0.85)
-        ("rust-nu-plugin-inc" ,rust-nu-plugin-inc-0.85)
-        ("rust-nu-plugin-match" ,rust-nu-plugin-match-0.85)
-        ("rust-nu-plugin-query-json" ,rust-nu-plugin-query-json-0.85)
-        ("rust-nu-plugin-s3" ,rust-nu-plugin-s3-0.85)
-        ("rust-nu-plugin-selector" ,rust-nu-plugin-selector-0.85)
-        ("rust-nu-plugin-start" ,rust-nu-plugin-start-0.85)
-        ("rust-nu-plugin-textview" ,rust-nu-plugin-textview-0.85)
-        ("rust-nu-plugin-to-bson" ,rust-nu-plugin-to-bson-0.85)
-        ("rust-nu-plugin-to-sqlite" ,rust-nu-plugin-to-sqlite-0.85)
-        ("rust-nu-plugin-tree" ,rust-nu-plugin-tree-0.85)
-        ("rust-nu-plugin-xpath" ,rust-nu-plugin-xpath-0.85))
-       #:cargo-development-inputs
-       (("rust-hamcrest2" ,rust-hamcrest2-0.3)
-        ("rust-nu-test-support" ,rust-nu-test-support-0.85)
-        ("rust-rstest" ,rust-rstest-0.10)
-        ("rust-serial-test" ,rust-serial-test-0.5))))
-    (native-inputs
-     (list pkg-config python))
-    (inputs
-     (list curl
-           libgit2
-           libx11
-           libxcb
-           openssl
-           zlib))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Shell with a structured approach to the command line")
-    (description
-     "Nu draws inspiration from projects like PowerShell, functional
-programming languages, and modern CLI tools.  Rather than thinking of files
-and services as raw streams of text, Nu looks at each input as something with
-structure.  For example, when you list the contents of a directory, what you
-get back is a table of rows, where each row represents an item in that
-directory.  These values can be piped through a series of steps, in a series
-of commands called a ``pipeline''.")
-    (license license:expat)))
-
-(define-public rust-nu-ansi-term-0.85
-  (package
-    (name "rust-nu-ansi-term")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-ansi-term" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1lmc9rdqnw586gv4a0c2gbg3x4a04fy65xk3fczby8lq84rz41i3"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-doc-comment" ,rust-doc-comment-0.3)
-        ("rust-overload" ,rust-overload-0.1)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-winapi" ,rust-winapi-0.3))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Library for ANSI terminal colors and styles (bold, underline)")
-    (description
-     "This package is a library for ANSI terminal colors and styles (bold,
-underline).")
-    (license license:expat)))
-
-(define-public rust-nu-cli-0.85
-  (package
-    (name "rust-nu-cli")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-cli" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0p085vgkzrczdz6ana9bb4r9hrcjm1hgr8f3885ik6kjlwiy5ixa"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-ctrlc" ,rust-ctrlc-3)
-        ("rust-indexmap" ,rust-indexmap-1)
-        ("rust-lazy-static" ,rust-lazy-static-1)
-        ("rust-log" ,rust-log-0.4)
-        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.85)
-        ("rust-nu-command" ,rust-nu-command-0.85)
-        ("rust-nu-completion" ,rust-nu-completion-0.85)
-        ("rust-nu-data" ,rust-nu-data-0.85)
-        ("rust-nu-engine" ,rust-nu-engine-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-parser" ,rust-nu-parser-0.85)
-        ("rust-nu-path" ,rust-nu-path-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-stream" ,rust-nu-stream-0.85)
-        ("rust-pretty-env-logger" ,rust-pretty-env-logger-0.4)
-        ("rust-rustyline" ,rust-rustyline-9)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-serde-yaml" ,rust-serde-yaml-0.8)
-        ("rust-shadow-rs" ,rust-shadow-rs-0.8)
-        ("rust-shadow-rs" ,rust-shadow-rs-0.8)
-        ("rust-strip-ansi-escapes" ,rust-strip-ansi-escapes-0.1))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "CLI for nushell")
-    (description "CLI for nushell")
-    (license license:expat)))
-
-(define-public rust-nu-command-0.85
-  (package
-    (name "rust-nu-command")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-command" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1h62df48z8vji10jsmpcfrgbr404kvsl1i3p5gns5gg9wscbpp8f"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-base64" ,rust-base64-0.13)
-        ("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-calamine" ,rust-calamine-0.18)
-        ("rust-chrono" ,rust-chrono-0.4)
-        ("rust-chrono-tz" ,rust-chrono-tz-0.5)
-        ("rust-crossterm" ,rust-crossterm-0.19)
-        ("rust-csv" ,rust-csv-1)
-        ("rust-ctrlc" ,rust-ctrlc-3)
-        ("rust-derive-new" ,rust-derive-new-0.5)
-        ("rust-digest" ,rust-digest-0.9)
-        ("rust-dirs-next" ,rust-dirs-next-2)
-        ("rust-dtparse" ,rust-dtparse-1)
-        ("rust-eml-parser" ,rust-eml-parser-0.1)
-        ("rust-encoding-rs" ,rust-encoding-rs-0.8)
-        ("rust-filesize" ,rust-filesize-0.2)
-        ("rust-futures" ,rust-futures-0.3)
-        ("rust-glob" ,rust-glob-0.3)
-        ("rust-heck" ,rust-heck-0.4)
-        ("rust-htmlescape" ,rust-htmlescape-0.3)
-        ("rust-ical" ,rust-ical-0.7)
-        ("rust-indexmap" ,rust-indexmap-1)
-        ("rust-itertools" ,rust-itertools-0.10)
-        ("rust-lazy-static" ,rust-lazy-static-1)
-        ("rust-log" ,rust-log-0.4)
-        ("rust-md-5" ,rust-md-5-0.9)
-        ("rust-meval" ,rust-meval-0.2)
-        ("rust-mime" ,rust-mime-0.3)
-        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.85)
-        ("rust-nu-data" ,rust-nu-data-0.85)
-        ("rust-nu-engine" ,rust-nu-engine-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-json" ,rust-nu-json-0.85)
-        ("rust-nu-parser" ,rust-nu-parser-0.85)
-        ("rust-nu-path" ,rust-nu-path-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-pretty-hex" ,rust-nu-pretty-hex-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-serde" ,rust-nu-serde-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-stream" ,rust-nu-stream-0.85)
-        ("rust-nu-table" ,rust-nu-table-0.85)
-        ("rust-nu-test-support" ,rust-nu-test-support-0.85)
-        ("rust-nu-value-ext" ,rust-nu-value-ext-0.85)
-        ("rust-num-bigint" ,rust-num-bigint-0.4)
-        ("rust-num-format" ,rust-num-format-0.4)
-        ("rust-num-traits" ,rust-num-traits-0.2)
-        ("rust-parking-lot" ,rust-parking-lot-0.11)
-        ("rust-polars" ,rust-polars-0.17)
-        ("rust-quick-xml" ,rust-quick-xml-0.22)
-        ("rust-quickcheck-macros" ,rust-quickcheck-macros-1)
-        ("rust-rand" ,rust-rand-0.8)
-        ("rust-regex" ,rust-regex-1)
-        ("rust-reqwest" ,rust-reqwest-0.11)
-        ("rust-roxmltree" ,rust-roxmltree-0.14)
-        ("rust-rust-embed" ,rust-rust-embed-5)
-        ("rust-rustyline" ,rust-rustyline-9)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-serde-ini" ,rust-serde-ini-0.2)
-        ("rust-serde-json" ,rust-serde-json-1)
-        ("rust-serde-urlencoded" ,rust-serde-urlencoded-0.7)
-        ("rust-serde-yaml" ,rust-serde-yaml-0.8)
-        ("rust-sha2" ,rust-sha2-0.9)
-        ("rust-shadow-rs" ,rust-shadow-rs-0.8)
-        ("rust-strip-ansi-escapes" ,rust-strip-ansi-escapes-0.1)
-        ("rust-sysinfo" ,rust-sysinfo-0.23)
-        ("rust-term" ,rust-term-0.7)
-        ("rust-term-size" ,rust-term-size-0.3)
-        ("rust-thiserror" ,rust-thiserror-1)
-        ("rust-titlecase" ,rust-titlecase-1)
-        ("rust-tokio" ,rust-tokio-1)
-        ("rust-toml" ,rust-toml-0.5)
-        ("rust-trash" ,rust-trash-2)
-        ("rust-umask" ,rust-umask-1)
-        ("rust-unicode-segmentation" ,rust-unicode-segmentation-1)
-        ("rust-url" ,rust-url-2)
-        ("rust-users" ,rust-users-0.11)
-        ("rust-uuid" ,rust-uuid-0.8)
-        ("rust-which" ,rust-which-4)
-        ("rust-zip" ,rust-zip-0.5))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "CLI for nushell")
-    (description "CLI for nushell")
-    (license license:expat)))
-
-(define-public rust-nu-completion-0.85
-  (package
-    (name "rust-nu-completion")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-completion" version))
-       (file-name
-        (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32
-         "0pp3949cckivl57cqmcm5cc4pd6z8syyrbankk32vwlm0v4yly0q"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-indexmap" ,rust-indexmap-1)
-        ("rust-is-executable" ,rust-is-executable-1)
-        ("rust-nu-data" ,rust-nu-data-0.85)
-        ("rust-nu-engine" ,rust-nu-engine-0.85)
-        ("rust-nu-parser" ,rust-nu-parser-0.85)
-        ("rust-nu-path" ,rust-nu-path-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-test-support" ,rust-nu-test-support-0.85))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Completions for nushell")
-    (description "Completions for nushell")
-    (license license:expat)))
-
-(define-public rust-nu-data-0.85
-  (package
-    (name "rust-nu-data")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-data" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1kjyp63fr18rym2xvfqpyw4z0z1j8ckf2aszfk1a4z0pj64w6bi6"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-byte-unit" ,rust-byte-unit-4)
-        ("rust-chrono" ,rust-chrono-0.4)
-        ("rust-common-path" ,rust-common-path-1)
-        ("rust-derive-new" ,rust-derive-new-0.5)
-        ("rust-directories-next" ,rust-directories-next-2)
-        ("rust-getset" ,rust-getset-0.1)
-        ("rust-indexmap" ,rust-indexmap-1)
-        ("rust-log" ,rust-log-0.4)
-        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-path" ,rust-nu-path-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-table" ,rust-nu-table-0.85)
-        ("rust-nu-test-support" ,rust-nu-test-support-0.85)
-        ("rust-nu-value-ext" ,rust-nu-value-ext-0.85)
-        ("rust-num-bigint" ,rust-num-bigint-0.4)
-        ("rust-num-format" ,rust-num-format-0.4)
-        ("rust-num-traits" ,rust-num-traits-0.2)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-sha2" ,rust-sha2-0.9)
-        ("rust-sys-locale" ,rust-sys-locale-0.1)
-        ("rust-toml" ,rust-toml-0.5))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "CLI for nushell")
-    (description "CLI for nushell")
-    (license license:expat)))
-
-(define-public rust-nu-engine-0.85
-  (package
-    (name "rust-nu-engine")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-engine" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0ry9x0ji4dikvd7vq4x9l1iqjwdhm80gcsvhfi7d0c26nvw8kpiz"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-bytes" ,rust-bytes-1)
-        ("rust-chrono" ,rust-chrono-0.4)
-        ("rust-codespan-reporting" ,rust-codespan-reporting-0.11)
-        ("rust-derive-new" ,rust-derive-new-0.5)
-        ("rust-dirs-next" ,rust-dirs-next-2)
-        ("rust-encoding-rs" ,rust-encoding-rs-0.8)
-        ("rust-filesize" ,rust-filesize-0.2)
-        ("rust-fs-extra" ,rust-fs-extra-1)
-        ("rust-getset" ,rust-getset-0.1)
-        ("rust-glob" ,rust-glob-0.3)
-        ("rust-indexmap" ,rust-indexmap-1)
-        ("rust-itertools" ,rust-itertools-0.10)
-        ("rust-lazy-static" ,rust-lazy-static-1)
-        ("rust-log" ,rust-log-0.4)
-        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.85)
-        ("rust-nu-data" ,rust-nu-data-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-parser" ,rust-nu-parser-0.85)
-        ("rust-nu-path" ,rust-nu-path-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-stream" ,rust-nu-stream-0.85)
-        ("rust-nu-test-support" ,rust-nu-test-support-0.85)
-        ("rust-nu-value-ext" ,rust-nu-value-ext-0.85)
-        ("rust-num-bigint" ,rust-num-bigint-0.4)
-        ("rust-parking-lot" ,rust-parking-lot-0.11)
-        ("rust-rayon" ,rust-rayon-1)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-serde-json" ,rust-serde-json-1)
-        ("rust-tempfile" ,rust-tempfile-3)
-        ("rust-term-size" ,rust-term-size-0.3)
-        ("rust-termcolor" ,rust-termcolor-1)
-        ("rust-trash" ,rust-trash-2)
-        ("rust-umask" ,rust-umask-1)
-        ("rust-users" ,rust-users-0.11)
-        ("rust-which" ,rust-which-4))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Core commands for nushell")
-    (description "Core commands for nushell")
-    (license license:expat)))
-
-(define-public rust-nu-errors-0.85
-  (package
-    (name "rust-nu-errors")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-errors" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1cd5rkqlhgab6hb1q31xqbrb0j9wbmwzp9z20rrsc59s5zajiivq"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-codespan-reporting" ,rust-codespan-reporting-0.11)
-        ("rust-derive-new" ,rust-derive-new-0.5)
-        ("rust-getset" ,rust-getset-0.1)
-        ("rust-glob" ,rust-glob-0.3)
-        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-num-bigint" ,rust-num-bigint-0.4)
-        ("rust-num-traits" ,rust-num-traits-0.2)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-serde-json" ,rust-serde-json-1)
-        ("rust-serde-yaml" ,rust-serde-yaml-0.8)
-        ("rust-toml" ,rust-toml-0.5))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Core error subsystem for Nushell")
-    (description "Core error subsystem for Nushell")
-    (license license:expat)))
-
-(define-public rust-nu-json-0.85
-  (package
-    (name "rust-nu-json")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-json" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0vdp2brhiyvrkqd1127cixwdcqqmbhf7qha4jyx1ki4hh7w86l0b"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-lazy-static" ,rust-lazy-static-1)
-        ("rust-linked-hash-map" ,rust-linked-hash-map-0.5)
-        ("rust-num-traits" ,rust-num-traits-0.2)
-        ("rust-regex" ,rust-regex-1)
-        ("rust-serde" ,rust-serde-1))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Fork of @code{serde-hjson}")
-    (description "This package is a fork of @code{serde-hjson}.")
-    (license license:expat)))
-
-(define-public rust-nu-parser-0.85
-  (package
-    (name "rust-nu-parser")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-parser" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1n4223kb9gnwmfhn4als68y1b2niw2zkl8wkra8622gm7p116xq6"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-derive-new" ,rust-derive-new-0.5)
-        ("rust-indexmap" ,rust-indexmap-1)
-        ("rust-itertools" ,rust-itertools-0.10)
-        ("rust-log" ,rust-log-0.4)
-        ("rust-nu-data" ,rust-nu-data-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-path" ,rust-nu-path-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-test-support" ,rust-nu-test-support-0.85)
-        ("rust-num-bigint" ,rust-num-bigint-0.4)
-        ("rust-smart-default" ,rust-smart-default-0.6))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Nushell parser")
-    (description "Nushell parser")
-    (license license:expat)))
-
-(define-public rust-nu-path-0.85
-  (package
-    (name "rust-nu-path")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-path" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "069df6ikkaimcr1pjiycfr3ma6sjmb4ajmyxqdckckaqx4nj5wqk"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-dirs-next" ,rust-dirs-next-2) ("rust-dunce" ,rust-dunce-1))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Nushell parser")
-    (description "Nushell parser")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-0.85
-  (package
-    (name "rust-nu-plugin")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-plugin" version))
-       (file-name
-        (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0vs4f84krf859j9f9rqzggzq3i49gb84928l22ddshdsspynckmj"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-indexmap" ,rust-indexmap-1)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-test-support" ,rust-nu-test-support-0.85)
-        ("rust-nu-value-ext" ,rust-nu-value-ext-0.85)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-serde-json" ,rust-serde-json-1))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Nushell Plugin")
-    (description "Nushell Plugin")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-binaryview-0.85
-  (package
-    (name "rust-nu-plugin-binaryview")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_binaryview" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1zk49hfp21akf6x7ml4b3h61y7jrj5i03zdmikci981idqm2fivm"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-crossterm" ,rust-crossterm-0.19)
-        ("rust-image" ,rust-image-0.23)
-        ("rust-neso" ,rust-neso-0.5)
-        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-pretty-hex" ,rust-nu-pretty-hex-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-rawkey" ,rust-rawkey-0.1))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Binary viewer plugin for Nushell")
-    (description
-     "This package provides a binary viewer plugin for Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-chart-0.85
-  (package
-    (name "rust-nu-plugin-chart")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_chart" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "05nv8c1650w8bh71s7yl35ybbjky6b4vdwkw0ywanhm1nqziva7s"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-crossterm" ,rust-crossterm-0.19)
-        ("rust-nu-data" ,rust-nu-data-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-value-ext" ,rust-nu-value-ext-0.85)
-        ("rust-tui" ,rust-tui-0.15))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Plugin to display charts")
-    (description
-     "This package provides a plugin to display charts in Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-from-bson-0.85
-  (package
-    (name "rust-nu-plugin-from-bson")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_from_bson" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1hmkqiqyqiin80fmlb31r6dgpif8r9nlda4w8ihzjflsbxnmp6wd"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-bson" ,rust-bson-2)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Converter plugin to the bson format for Nushell")
-    (description
-     "This package provides a converter plugin to the bson format for
-Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-from-sqlite-0.85
-  (package
-    (name "rust-nu-plugin-from-sqlite")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_from_sqlite" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "11dirmm78n6jwsq8qihx3sbjfa0j7s9ffl1j03v8f4zzfvsypxxb"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-rusqlite" ,rust-rusqlite-0.26)
-        ("rust-tempfile" ,rust-tempfile-3))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Converter plugin to the bson format for Nushell")
-    (description
-     "This package provides a converter plugin to the bson format for
-Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-inc-0.85
-  (package
-    (name "rust-nu-plugin-inc")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_inc" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0gyj54ip1nl68rav3h78sjljh826cp71khmjsbsvyphhgdm1kbhw"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-test-support" ,rust-nu-test-support-0.85)
-        ("rust-nu-value-ext" ,rust-nu-value-ext-0.85)
-        ("rust-semver" ,rust-semver-0.11))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Version incrementer plugin for Nushell")
-    (description
-     "This package provides a version incrementer plugin for
-Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-match-0.85
-  (package
-    (name "rust-nu-plugin-match")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_match" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1hbs9h28qwwd8i3rb2klx2xmgcxs6l92x9dbmjx3bl85wmjk2skm"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-regex" ,rust-regex-1))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Regex match plugin for Nushell")
-    (description
-     "This package provides a regex match plugin for Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-query-json-0.85
-  (package
-    (name "rust-nu-plugin-query-json")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_query_json" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1yzcgm8sqzgr55hdcpzqrdfjc0yhz95qqpxyscm8cm6xw59ib0z2"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-gjson" ,rust-gjson-0.8)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Query JSON files with Gjson")
-    (description "query json files with gjson")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-s3-0.85
-  (package
-    (name "rust-nu-plugin-s3")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_s3" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0ims4p3z48ja8ygkhcbq1a506hp8ry3ipdpgv9j7iqi833g0vgjl"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-futures" ,rust-futures-0.3)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-s3handler" ,rust-s3handler-0.7))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "S3 plugin for Nushell")
-    (description "This package is an S3 plugin for Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-selector-0.85
-  (package
-    (name "rust-nu-plugin-selector")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_selector" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1ni51yr1vndjf7c9qmvrc23nn3csv5jy14bwd8kxd5b7648aidsy"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-scraper" ,rust-scraper-0.12))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Web scraping using CSS selector")
-    (description
-     "This package provides web scraping using CSS selector.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-start-0.85
-  (package
-    (name "rust-nu-plugin-start")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_start" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "028pb15y5dyywc84h79kdf0hz9l1m37djly8jhrcbj6v55x3k9h6"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-glob" ,rust-glob-0.3)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-open" ,rust-open-1)
-        ("rust-url" ,rust-url-2)
-        ("rust-webbrowser" ,rust-webbrowser-0.5))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Plugin to open files/URLs directly from Nushell")
-    (description
-     "This package provides a plugin to open files/URLs directly from
-Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-textview-0.85
-  (package
-    (name "rust-nu-plugin-textview")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_textview" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "17amhjvx1jfdz98jiavhnn18263f3hg3is7x0rkdzddng0abzpc7"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bat" ,rust-bat-0.18)
-        ("rust-nu-data" ,rust-nu-data-0.85)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-term-size" ,rust-term-size-0.3)
-        ("rust-url" ,rust-url-2))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Text viewer plugin for Nushell")
-    (description "This package provides a text viewer plugin for
-Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-to-bson-0.85
-  (package
-    (name "rust-nu-plugin-to-bson")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_to_bson" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "003x90qshcn7yv86zaw449akqvi4vz78s05g0qcgrfxgvpn7vdch"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bson" ,rust-bson-2)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-num-traits" ,rust-num-traits-0.2))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Converter plugin to the bson format for Nushell")
-    (description
-     "This package provides a converter plugin to the bson format for
-Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-to-sqlite-0.85
-  (package
-    (name "rust-nu-plugin-to-sqlite")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_to_sqlite" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "06d93a5xgssvxrbvcv12b9jwh9xwl6sz6admbpxnk9r78lpgfdaj"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-hex" ,rust-hex-0.4)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-rusqlite" ,rust-rusqlite-0.26)
-        ("rust-tempfile" ,rust-tempfile-3))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Converter plugin to the bson format for Nushell")
-    (description
-     "This package provides a converter plugin to the bson format for
-Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-tree-0.85
-  (package
-    (name "rust-nu-plugin-tree")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_tree" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "089mp7spa0fcxm45njmjcab685cv30jb0b3kkgvjp8ywwakyy8lb"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-derive-new" ,rust-derive-new-0.5)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-ptree" ,rust-ptree-0.4))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Tree viewer plugin for Nushell")
-    (description "This package provides a tree viewer plugin for
-Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-plugin-xpath-0.85
-  (package
-    (name "rust-nu-plugin-xpath")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu_plugin_xpath" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "18qbhibn9pz9hnilqzv2g1s51fmlwpm60ma2r6qjsa5pcy9x12dh"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-indexmap" ,rust-indexmap-1)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-sxd-document" ,rust-sxd-document-0.3)
-        ("rust-sxd-xpath" ,rust-sxd-xpath-0.4))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Traverses XML")
-    (description "Traverses XML")
-    (license license:expat)))
-
-(define-public rust-nu-pretty-hex-0.85
-  (package
-    (name "rust-nu-pretty-hex")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-pretty-hex" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1dizakbxm2c6vpjy5brqbjhk8m7lr7wammibb1vr8nq85aazrj5r"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-heapless" ,rust-heapless-0.7)
-        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.85)
-        ("rust-rand" ,rust-rand-0.8))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Pretty hex dump of bytes slice in the common style")
-    (description
-     "This crate provides pretty hex dump of bytes slice in the common
-style.")
-    (license license:expat)))
-
-(define-public rust-nu-protocol-0.85
-  (package
-    (name "rust-nu-protocol")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-protocol" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1r6cnrqsq3qx3132w0p78262vql1bk446ynnfjsiffd07rmba2f7"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-byte-unit" ,rust-byte-unit-4)
-        ("rust-chrono" ,rust-chrono-0.4)
-        ("rust-chrono-humanize" ,rust-chrono-humanize-0.2)
-        ("rust-derive-new" ,rust-derive-new-0.5)
-        ("rust-getset" ,rust-getset-0.1)
-        ("rust-indexmap" ,rust-indexmap-1)
-        ("rust-log" ,rust-log-0.4)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-num-bigint" ,rust-num-bigint-0.4)
-        ("rust-num-integer" ,rust-num-integer-0.1)
-        ("rust-num-traits" ,rust-num-traits-0.2)
-        ("rust-polars" ,rust-polars-0.17)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-serde-bytes" ,rust-serde-bytes-0.11))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Core values and protocols for Nushell")
-    (description "Core values and protocols for Nushell")
-    (license license:expat)))
-
-(define-public rust-nu-serde-0.85
-  (package
-    (name "rust-nu-serde")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-serde" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "190lid6jqgrb50qzqk849hg44rcn392qbppdm8zhgy732fsjb2j4"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-insta" ,rust-insta-1)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-thiserror" ,rust-thiserror-1))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Turn any value into a @code{nu-protocol::Value} with Serde")
-    (description
-     "This crate turns any value into a @code{nu-protocol::Value} with
-Serde.")
-    (license license:expat)))
-
-(define-public rust-nu-source-0.85
-  (package
-    (name "rust-nu-source")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-source" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "04w4s4yk5byy5mmrhvcbcvf179vjmb9pa2jch5vgl6rckipzd31l"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-derive-new" ,rust-derive-new-0.5)
-        ("rust-getset" ,rust-getset-0.1)
-        ("rust-pretty" ,rust-pretty-0.5)
-        ("rust-serde" ,rust-serde-1)
-        ("rust-termcolor" ,rust-termcolor-1))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Source string characterizer for Nushell")
-    (description
-     "This package provides a source string characterizer for
-Nushell.")
-    (license license:expat)))
-
-(define-public rust-nu-stream-0.85
-  (package
-    (name "rust-nu-stream")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-stream" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "14fs2dqa4papd48zil35901z4sc0p15dga96jbrsbhimk85g0gba"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Nushell stream")
-    (description "This package provides Nushell stream.")
-    (license license:expat)))
-
-(define-public rust-nu-table-0.85
-  (package
-    (name "rust-nu-table")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-table" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0lk2cr8k0wbh5ya42ldz129yzfpqibzvjqy1bkpccfh2lf9n01g2"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-atty" ,rust-atty-0.2)
-        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.85)
-        ("rust-regex" ,rust-regex-1)
-        ("rust-strip-ansi-escapes" ,rust-strip-ansi-escapes-0.1)
-        ("rust-unicode-width" ,rust-unicode-width-0.1))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Nushell table printing")
-    (description "Nushell table printing")
-    (license license:expat)))
-
-(define-public rust-nu-test-support-0.85
-  (package
-    (name "rust-nu-test-support")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-test-support" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0fjaczf05lzs77f1chif11085xy2yklw2lzl0vz0sdzzkll1r374"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-bigdecimal" ,rust-bigdecimal-0.3)
-        ("rust-chrono" ,rust-chrono-0.4)
-        ("rust-getset" ,rust-getset-0.1)
-        ("rust-glob" ,rust-glob-0.3)
-        ("rust-hamcrest2" ,rust-hamcrest2-0.3)
-        ("rust-indexmap" ,rust-indexmap-1)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-path" ,rust-nu-path-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-num-bigint" ,rust-num-bigint-0.4)
-        ("rust-tempfile" ,rust-tempfile-3))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "Support for writing Nushell tests")
-    (description "This package provides support for writing Nushell
-tests.")
-    (license license:expat)))
-
-(define-public rust-nu-value-ext-0.85
-  (package
-    (name "rust-nu-value-ext")
-    (version "0.85.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nu-value-ext" version))
-       (file-name
-        (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0ag5y6qfj53w6skyb0vhwhxiykvpmz5izpgxnbz5r0i0bdscrmdy"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs
-       (("rust-indexmap" ,rust-indexmap-1)
-        ("rust-itertools" ,rust-itertools-0.10)
-        ("rust-nu-errors" ,rust-nu-errors-0.85)
-        ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-        ("rust-nu-source" ,rust-nu-source-0.85)
-        ("rust-num-traits" ,rust-num-traits-0.2))))
-    (home-page "https://www.nushell.sh")
-    (synopsis "@code{Extension} traits for values in Nushell")
-    (description
-     "This package provides @code{Extension} traits for values in
-Nushell.")
-    (license license:expat)))
+  #:use-module (guix utils)
+  #:use-module (rust))
 
 (define-public rust-fastrand-2
   (package
@@ -2183,17 +153,39 @@ Nushell.")
     (description "Helper crate for serial_test")
     (license license:expat)))
 
+(define-public rust-redox-syscall-0.4
+  (package
+    (name "rust-redox-syscall")
+    (version "0.4.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "redox_syscall" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1aiifyz5dnybfvkk4cdab9p2kmphag1yad6iknc7aszlxxldf8j7"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-bitflags" ,rust-bitflags-1)
+                       ("rust-rustc-std-workspace-core" ,rust-rustc-std-workspace-core-1))))
+    (home-page "https://gitlab.redox-os.org/redox-os/syscall")
+    (synopsis "A Rust library to access raw Redox system calls")
+    (description
+     "This package provides a Rust library to access raw Redox system calls")
+    (license license:expat)))
+
 (define-public rust-parking-lot-core-0.9
   (package
     (name "rust-parking-lot-core")
-    (version "0.9.8")
+    (version "0.9.9")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "parking_lot_core" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0ixlak319bpzldq20yvyfqk0y1vi736zxbw101jvzjp7by30rw4k"))))
+        (base32 "13h0imw1aq86wj28gxkblhkzx6z1gk8q18n0v76qmmj6cliajhjc"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -2201,7 +193,7 @@ Nushell.")
                        ("rust-cfg-if" ,rust-cfg-if-1)
                        ("rust-libc" ,rust-libc-0.2)
                        ("rust-petgraph" ,rust-petgraph-0.6)
-                       ("rust-redox-syscall" ,rust-redox-syscall-0.3)
+                       ("rust-redox-syscall" ,rust-redox-syscall-0.4)
                        ("rust-smallvec" ,rust-smallvec-1)
                        ("rust-thread-id" ,rust-thread-id-4)
                        ("rust-windows-targets" ,rust-windows-targets-0.48))))
@@ -2215,14 +207,14 @@ Nushell.")
 (define-public rust-lock-api-0.4
   (package
     (name "rust-lock-api")
-    (version "0.4.10")
+    (version "0.4.11")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "lock_api" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "05nd9nzxqidg24d1k8y5vlc8lz9gscpskrikycib46qbl8brgk61"))))
+        (base32 "0iggx0h4jx63xm35861106af3jkxq06fpqhpkhgw0axi2n38y5iw"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -2396,24 +388,24 @@ fixtures and table based tests.")
 colorful diffs.")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-nu-test-support-0.85
+(define-public rust-nu-test-support-0.86
   (package
     (name "rust-nu-test-support")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-test-support" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1ly52yl7rwx14gfw2kwcw73z1r1jajcbpis86my1nv7ds0lh09xa"))))
+        (base32 "1453ikw3bwmgls9qq255qip2968g2f3iz6rb7c0kq9xnzbrmb506"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-hamcrest2" ,rust-hamcrest2-0.3)
-                       ("rust-nu-glob" ,rust-nu-glob-0.85)
-                       ("rust-nu-path" ,rust-nu-path-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
+                       ("rust-nu-glob" ,rust-nu-glob-0.86)
+                       ("rust-nu-path" ,rust-nu-path-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-num-format" ,rust-num-format-0.4)
                        ("rust-tempfile" ,rust-tempfile-3)
                        ("rust-which" ,rust-which-4))))
@@ -2512,24 +504,24 @@ colorful diffs.")
 crate")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-nu-std-0.85
+(define-public rust-nu-std-0.86
   (package
     (name "rust-nu-std")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-std" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1jq4603x37zakpykvwpkdsv72szhwnzna3z2xki0s5hg431z6cf2"))))
+        (base32 "1c2cn9jy0l86kjcwy9zlmgifwjp52iah75b2lbjd5vl72qm7ngng"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-miette" ,rust-miette-5)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-parser" ,rust-nu-parser-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85))))
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-parser" ,rust-nu-parser-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86))))
     (home-page "https://github.com/nushell/nushell/tree/main/crates/nu-std")
     (synopsis "The standard library of Nushell")
     (description "The standard library of Nushell")
@@ -2848,17 +840,17 @@ segmentation)")
 interfaces")
     (license license:expat)))
 
-(define-public rust-nu-explore-0.85
+(define-public rust-nu-explore-0.86
   (package
     (name "rust-nu-explore")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-explore" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0x0wyda403ljzy5g0lp2db1wrkhnmhbicrwrnlj0kaqqc672blyj"))))
+        (base32 "1mlwzws1mm182i2s9jdrf6bh8my3p3yx5k3g29861ylkq40s655g"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -2866,16 +858,17 @@ interfaces")
                        ("rust-crossterm" ,rust-crossterm-0.27)
                        ("rust-lscolors" ,rust-lscolors-0.15)
                        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.49)
-                       ("rust-nu-color-config" ,rust-nu-color-config-0.85)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-json" ,rust-nu-json-0.85)
-                       ("rust-nu-parser" ,rust-nu-parser-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-                       ("rust-nu-table" ,rust-nu-table-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
+                       ("rust-nu-color-config" ,rust-nu-color-config-0.86)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-json" ,rust-nu-json-0.86)
+                       ("rust-nu-parser" ,rust-nu-parser-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
+                       ("rust-nu-table" ,rust-nu-table-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-ratatui" ,rust-ratatui-0.23)
                        ("rust-strip-ansi-escapes" ,rust-strip-ansi-escapes-0.2)
-                       ("rust-terminal-size" ,rust-terminal-size-0.2))))
+                       ("rust-terminal-size" ,rust-terminal-size-0.2)
+                       ("rust-unicode-width" ,rust-unicode-width-0.1))))
     (home-page
      "https://github.com/nushell/nushell/tree/main/crates/nu-explore")
     (synopsis "Nushell table pager")
@@ -2998,6 +991,48 @@ interfaces")
 installed executable in cross platforms.")
     (license license:expat)))
 
+(define-public rust-vec1-1
+  (package
+    (name "rust-vec1")
+    (version "1.10.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "vec1" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0p4xrrgqpzxlg7q74aqwxgsyfjsz0ppfgabqqahyj7rkr90prnib"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-serde" ,rust-serde-1)
+                       ("rust-smallvec" ,rust-smallvec-1))))
+    (home-page "https://github.com/rustonaut/vec1/")
+    (synopsis "a std Vec wrapper assuring that it has at least 1 element")
+    (description "a std Vec wrapper assuring that it has at least 1 element")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-tardar-0.1
+  (package
+    (name "rust-tardar")
+    (version "0.1.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "tardar" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "05imkznxr59dqp0s37i7qkrpyjx2zz9lmxy8ijcvka5nhcpr834h"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-miette" ,rust-miette-5)
+                       ("rust-vec1" ,rust-vec1-1))))
+    (home-page "https://github.com/olson-sean-k/tardar")
+    (synopsis "Extensions for diagnostic error handling with `miette`.")
+    (description "Extensions for diagnostic error handling with `miette`.")
+    (license license:expat)))
+
 (define-public rust-pori-0.0.0
   (package
     (name "rust-pori")
@@ -3018,215 +1053,28 @@ installed executable in cross platforms.")
     (description "Parser state and error extensions for nom.")
     (license license:expat)))
 
-(define-public rust-indent-write-2
-  (package
-    (name "rust-indent-write")
-    (version "2.2.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "indent_write" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1hqjp80argdskrhd66g9sh542yxy8qi77j6rc69qd0l7l52rdzhc"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t))
-    (home-page "https://github.com/Lucretiel/indent-write")
-    (synopsis "Simple Write adapters to add line indentation")
-    (description "Simple Write adapters to add line indentation")
-    (license license:mpl2.0)))
-
-(define-public rust-brownstone-3
-  (package
-    (name "rust-brownstone")
-    (version "3.0.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "brownstone" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "08kzq5dmf1cl8pzhp6wm8wa3wsicrc4za8zjvjzi3s2kz7j9x0y5"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-arrayvec" ,rust-arrayvec-0.7))))
-    (home-page "https://github.com/Lucretiel/brownstone")
-    (synopsis "Utilities for building fixed-size arrays")
-    (description "Utilities for building fixed-size arrays")
-    (license license:mpl2.0)))
-
-(define-public rust-nom-supreme-0.8
-  (package
-    (name "rust-nom-supreme")
-    (version "0.8.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "nom-supreme" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "09xbvjqwbb7l5sfam4gzp7n93d14bp4m3zsrhxc5j68zj1naxlrb"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-brownstone" ,rust-brownstone-3)
-                       ("rust-indent-write" ,rust-indent-write-2)
-                       ("rust-joinery" ,rust-joinery-2)
-                       ("rust-memchr" ,rust-memchr-2)
-                       ("rust-nom" ,rust-nom-7))))
-    (home-page "https://github.com/Lucretiel/nom-supreme")
-    (synopsis "A collection of excellent utilities for nom")
-    (description
-     "This package provides a collection of excellent utilities for nom")
-    (license license:mpl2.0)))
-
-(define-public rust-supports-unicode-1
-  (package
-    (name "rust-supports-unicode")
-    (version "1.0.2")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "supports-unicode" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1cpq6mbixlpdibwx203p6qh7kpzqy9yin7y5ird14ys1bgj4bfd8"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-atty" ,rust-atty-0.2))))
-    (home-page "https://github.com/zkat/supports-unicode")
-    (synopsis "Detects whether a terminal supports unicode.")
-    (description "Detects whether a terminal supports unicode.")
-    (license license:asl2.0)))
-
-(define-public rust-supports-hyperlinks-1
-  (package
-    (name "rust-supports-hyperlinks")
-    (version "1.2.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "supports-hyperlinks" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "01k4rr0p8fvgc8qwy8bnlr8gf7gk8psb796vg2fwq7phqpvk82sr"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-atty" ,rust-atty-0.2))))
-    (home-page "https://github.com/zkat/supports-hyperlinks")
-    (synopsis "Detects whether a terminal supports rendering hyperlinks.")
-    (description "Detects whether a terminal supports rendering hyperlinks.")
-    (license license:asl2.0)))
-
-(define-public rust-supports-color-1
-  (package
-    (name "rust-supports-color")
-    (version "1.3.1")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "supports-color" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0vqdhwc3yf1bv1xbaz5d8p2brmlv1ap4fhwg8pfjzr3yrbrgm9lb"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-atty" ,rust-atty-0.2)
-                       ("rust-is-ci" ,rust-is-ci-1))))
-    (home-page "https://github.com/zkat/supports-color")
-    (synopsis
-     "Detects whether a terminal supports color, and gives details about that support.")
-    (description
-     "Detects whether a terminal supports color, and gives details about that support.")
-    (license license:asl2.0)))
-
-(define-public rust-miette-derive-4
-  (package
-    (name "rust-miette-derive")
-    (version "4.7.1")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "miette-derive" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0k0ph38lxzqamaabind8463j2k5qjg6jhhbcdrg1pkqvfrdw8nvb"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
-                       ("rust-quote" ,rust-quote-1)
-                       ("rust-syn" ,rust-syn-1))))
-    (home-page "https://github.com/zkat/miette")
-    (synopsis "Derive macros for miette. Like `thiserror` for Diagnostics.")
-    (description
-     "Derive macros for miette.  Like `thiserror` for Diagnostics.")
-    (license license:asl2.0)))
-
-(define-public rust-miette-4
-  (package
-    (name "rust-miette")
-    (version "4.7.1")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "miette" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1365xpl8l66lsvn6bk4mhbpxf5gciiazj4apyiaqn87r8jg3540w"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-atty" ,rust-atty-0.2)
-                       ("rust-backtrace" ,rust-backtrace-0.3)
-                       ("rust-miette-derive" ,rust-miette-derive-4)
-                       ("rust-once-cell" ,rust-once-cell-1)
-                       ("rust-owo-colors" ,rust-owo-colors-3)
-                       ("rust-supports-color" ,rust-supports-color-1)
-                       ("rust-supports-hyperlinks" ,rust-supports-hyperlinks-1)
-                       ("rust-supports-unicode" ,rust-supports-unicode-1)
-                       ("rust-terminal-size" ,rust-terminal-size-0.1)
-                       ("rust-textwrap" ,rust-textwrap-0.15)
-                       ("rust-thiserror" ,rust-thiserror-1)
-                       ("rust-unicode-width" ,rust-unicode-width-0.1))))
-    (home-page "https://github.com/zkat/miette")
-    (synopsis
-     "Fancy diagnostic reporting library and protocol for us mere mortals who aren't compiler hackers.")
-    (description
-     "Fancy diagnostic reporting library and protocol for us mere mortals who aren't
-compiler hackers.")
-    (license license:asl2.0)))
-
-(define-public rust-wax-0.5
+(define-public rust-wax-0.6
   (package
     (name "rust-wax")
-    (version "0.5.0")
+    (version "0.6.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "wax" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1z5s3gkv3jjlcq1lly7215rf08zfnx1a88mlnxic02hiqsxa7iq6"))))
+        (base32 "0mqk9qxsjlbwnjnj0gkaa29qm3mmgbgrc6pd4qpjvcmsl25af4ld"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-bstr" ,rust-bstr-0.2)
-                       ("rust-const-format" ,rust-const-format-0.2)
-                       ("rust-itertools" ,rust-itertools-0.10)
-                       ("rust-miette" ,rust-miette-4)
+       #:cargo-inputs (("rust-const-format" ,rust-const-format-0.2)
+                       ("rust-itertools" ,rust-itertools-0.11)
+                       ("rust-miette" ,rust-miette-5)
                        ("rust-nom" ,rust-nom-7)
-                       ("rust-nom-supreme" ,rust-nom-supreme-0.8)
                        ("rust-pori" ,rust-pori-0.0.0)
                        ("rust-regex" ,rust-regex-1)
-                       ("rust-smallvec" ,rust-smallvec-1)
+                       ("rust-tardar" ,rust-tardar-0.1)
                        ("rust-thiserror" ,rust-thiserror-1)
-                       ("rust-vec1" ,rust-vec1-1)
                        ("rust-walkdir" ,rust-walkdir-2))))
     (home-page "https://github.com/olson-sean-k/wax")
     (synopsis
@@ -3611,134 +1459,6 @@ SHA-256, SHA-384, and SHA-512.")
     (description "Macros for data-encoding")
     (license license:expat)))
 
-(define-public rust-clap-derive-4
-  (package
-    (name "rust-clap-derive")
-    (version "4.4.2")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "clap_derive" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0wxq692izvj0gn4i29002xs8l02wpzx6jwr4z17bhs8dy9ph2qh8"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-heck" ,rust-heck-0.4)
-                       ("rust-proc-macro2" ,rust-proc-macro2-1)
-                       ("rust-quote" ,rust-quote-1)
-                       ("rust-syn" ,rust-syn-2))))
-    (home-page "https://github.com/clap-rs/clap/tree/master/clap_derive")
-    (synopsis
-     "Parse command line argument by defining a struct, derive crate.")
-    (description
-     "Parse command line argument by defining a struct, derive crate.")
-    (license (list license:expat license:asl2.0))))
-
-(define-public rust-anstyle-wincon-3
-  (package
-    (name "rust-anstyle-wincon")
-    (version "3.0.1")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "anstyle-wincon" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0a066gr4p7bha8qwnxyrpbrqzjdvk8l7pdg7isljimpls889ssgh"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-anstyle" ,rust-anstyle-1)
-                       ("rust-windows-sys" ,rust-windows-sys-0.48))))
-    (home-page "https://github.com/rust-cli/anstyle")
-    (synopsis "Styling legacy Windows terminals")
-    (description "Styling legacy Windows terminals")
-    (license (list license:expat license:asl2.0))))
-
-(define-public rust-anstream-0.6
-  (package
-    (name "rust-anstream")
-    (version "0.6.4")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "anstream" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0i2a9390vwhc42c5njz38n56jfwg17v64nqw9232j9gb2sz1xf9a"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-anstyle" ,rust-anstyle-1)
-                       ("rust-anstyle-parse" ,rust-anstyle-parse-0.2)
-                       ("rust-anstyle-query" ,rust-anstyle-query-1)
-                       ("rust-anstyle-wincon" ,rust-anstyle-wincon-3)
-                       ("rust-colorchoice" ,rust-colorchoice-1)
-                       ("rust-utf8parse" ,rust-utf8parse-0.2))))
-    (home-page "https://github.com/rust-cli/anstyle")
-    (synopsis
-     "A simple cross platform library for writing colored text to a terminal.")
-    (description
-     "This package provides a simple cross platform library for writing colored text
-to a terminal.")
-    (license (list license:expat license:asl2.0))))
-
-(define-public rust-clap-builder-4
-  (package
-    (name "rust-clap-builder")
-    (version "4.4.6")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "clap_builder" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0iafh05fjzgaldx10j9qik9ir5sqz1mrcdy7lcgbspm6mjp1y8qf"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-anstream" ,rust-anstream-0.6)
-                       ("rust-anstyle" ,rust-anstyle-1)
-                       ("rust-backtrace" ,rust-backtrace-0.3)
-                       ("rust-clap-lex" ,rust-clap-lex-0.5)
-                       ("rust-strsim" ,rust-strsim-0.10)
-                       ("rust-terminal-size" ,rust-terminal-size-0.3)
-                       ("rust-unicase" ,rust-unicase-2)
-                       ("rust-unicode-width" ,rust-unicode-width-0.1))))
-    (home-page "https://github.com/clap-rs/clap")
-    (synopsis
-     "A simple to use, efficient, and full-featured Command Line Argument Parser")
-    (description
-     "This package provides a simple to use, efficient, and full-featured Command Line
-Argument Parser")
-    (license (list license:expat license:asl2.0))))
-
-(define-public rust-clap-4
-  (package
-    (name "rust-clap")
-    (version "4.4.6")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "clap" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0mmragwn4wqp42ksv67wj9fdq5pj8d5iab4f7vs0gpicdksh8iyh"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-clap-builder" ,rust-clap-builder-4)
-                       ("rust-clap-derive" ,rust-clap-derive-4))))
-    (home-page "https://github.com/clap-rs/clap")
-    (synopsis
-     "A simple to use, efficient, and full-featured Command Line Argument Parser")
-    (description
-     "This package provides a simple to use, efficient, and full-featured Command Line
-Argument Parser")
-    (license (list license:expat license:asl2.0))))
-
 (define-public rust-arrayvec-0.7
   (package
     (name "rust-arrayvec")
@@ -3988,22 +1708,22 @@ be stored on the stack too).  Implements fixed capacity @code{ArrayVec} and
     (description "Flexible Mandatory Access Control for Linux")
     (license license:expat)))
 
-(define-public rust-exacl-0.10
+(define-public rust-exacl-0.11
   (package
     (name "rust-exacl")
-    (version "0.10.0")
+    (version "0.11.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "exacl" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1girsssq3lcqj34zrybiyf07307bs6pzqgy4c8r4rcnyb4mb5zhw"))))
+        (base32 "17vd67mhppnw1kbb053c4bygilbdviz53zrzm4z1cxr73hn1b5f6"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-bindgen" ,rust-bindgen-0.63)
-                       ("rust-bitflags" ,rust-bitflags-1)
+       #:cargo-inputs (("rust-bindgen" ,rust-bindgen-0.68)
+                       ("rust-bitflags" ,rust-bitflags-2)
                        ("rust-log" ,rust-log-0.4)
                        ("rust-scopeguard" ,rust-scopeguard-1)
                        ("rust-serde" ,rust-serde-1)
@@ -4016,22 +1736,150 @@ be stored on the stack too).  Implements fixed capacity @code{ArrayVec} and
 @code{FreeBSD}")
     (license license:expat)))
 
-(define-public rust-uu-cp-0.0.21
+(define-public rust-clap-derive-4
+  (package
+    (name "rust-clap-derive")
+    (version "4.4.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "clap_derive" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0wxq692izvj0gn4i29002xs8l02wpzx6jwr4z17bhs8dy9ph2qh8"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-heck" ,rust-heck-0.4)
+                       ("rust-proc-macro2" ,rust-proc-macro2-1)
+                       ("rust-quote" ,rust-quote-1)
+                       ("rust-syn" ,rust-syn-2))))
+    (home-page "https://github.com/clap-rs/clap/tree/master/clap_derive")
+    (synopsis
+     "Parse command line argument by defining a struct, derive crate.")
+    (description
+     "Parse command line argument by defining a struct, derive crate.")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-anstyle-wincon-3
+  (package
+    (name "rust-anstyle-wincon")
+    (version "3.0.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "anstyle-wincon" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0a066gr4p7bha8qwnxyrpbrqzjdvk8l7pdg7isljimpls889ssgh"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-anstyle" ,rust-anstyle-1)
+                       ("rust-windows-sys" ,rust-windows-sys-0.48))))
+    (home-page "https://github.com/rust-cli/anstyle")
+    (synopsis "Styling legacy Windows terminals")
+    (description "Styling legacy Windows terminals")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-anstream-0.6
+  (package
+    (name "rust-anstream")
+    (version "0.6.4")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "anstream" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0i2a9390vwhc42c5njz38n56jfwg17v64nqw9232j9gb2sz1xf9a"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-anstyle" ,rust-anstyle-1)
+                       ("rust-anstyle-parse" ,rust-anstyle-parse-0.2)
+                       ("rust-anstyle-query" ,rust-anstyle-query-1)
+                       ("rust-anstyle-wincon" ,rust-anstyle-wincon-3)
+                       ("rust-colorchoice" ,rust-colorchoice-1)
+                       ("rust-utf8parse" ,rust-utf8parse-0.2))))
+    (home-page "https://github.com/rust-cli/anstyle")
+    (synopsis
+     "A simple cross platform library for writing colored text to a terminal.")
+    (description
+     "This package provides a simple cross platform library for writing colored text
+to a terminal.")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-clap-builder-4
+  (package
+    (name "rust-clap-builder")
+    (version "4.4.6")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "clap_builder" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0iafh05fjzgaldx10j9qik9ir5sqz1mrcdy7lcgbspm6mjp1y8qf"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-anstream" ,rust-anstream-0.6)
+                       ("rust-anstyle" ,rust-anstyle-1)
+                       ("rust-backtrace" ,rust-backtrace-0.3)
+                       ("rust-clap-lex" ,rust-clap-lex-0.5)
+                       ("rust-strsim" ,rust-strsim-0.10)
+                       ("rust-terminal-size" ,rust-terminal-size-0.3)
+                       ("rust-unicase" ,rust-unicase-2)
+                       ("rust-unicode-width" ,rust-unicode-width-0.1))))
+    (home-page "https://github.com/clap-rs/clap")
+    (synopsis
+     "A simple to use, efficient, and full-featured Command Line Argument Parser")
+    (description
+     "This package provides a simple to use, efficient, and full-featured Command Line
+Argument Parser")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-clap-4
+  (package
+    (name "rust-clap")
+    (version "4.4.6")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "clap" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0mmragwn4wqp42ksv67wj9fdq5pj8d5iab4f7vs0gpicdksh8iyh"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-clap-builder" ,rust-clap-builder-4)
+                       ("rust-clap-derive" ,rust-clap-derive-4))))
+    (home-page "https://github.com/clap-rs/clap")
+    (synopsis
+     "A simple to use, efficient, and full-featured Command Line Argument Parser")
+    (description
+     "This package provides a simple to use, efficient, and full-featured Command Line
+Argument Parser")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-uu-cp-0.0.22
   (package
     (name "rust-uu-cp")
-    (version "0.0.21")
+    (version "0.0.22")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "uu_cp" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1ibilwp2bbyd3p8q6gqzymgr0fhn9v8cxz5dgp3pkr9v10vqbrvc"))))
+        (base32 "03idj6l9xcmdfwn6djs7ivckpzgvzxnhh4a75v423asgqw4f1zbz"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-clap" ,rust-clap-4)
-                       ("rust-exacl" ,rust-exacl-0.10)
+                       ("rust-exacl" ,rust-exacl-0.11)
                        ("rust-filetime" ,rust-filetime-0.2)
                        ("rust-indicatif" ,rust-indicatif-0.17)
                        ("rust-libc" ,rust-libc-0.2)
@@ -4249,88 +2097,17 @@ Defines the macros `defer!`, `defer_on_unwind!`, `defer_on_success!` as
 shorthands for guards with one of the implemented strategies.")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-pure-rust-locales-0.7
-  (package
-    (name "rust-pure-rust-locales")
-    (version "0.7.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "pure-rust-locales" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0cl46srhxzj0jlvfp73l8l9qw54qwa04zywaxdf73hidwqlsh0pd"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t))
-    (home-page "https://github.com/cecton/pure-rust-locales")
-    (synopsis
-     "Pure Rust locales imported directly from the GNU C Library. `LC_COLLATE` and `LC_CTYPE` are not yet supported.")
-    (description
-     "Pure Rust locales imported directly from the GNU C Library. `LC_COLLATE` and
-`LC_CTYPE` are not yet supported.")
-    (license (list license:expat license:asl2.0))))
-
-(define-public rust-android-tzdata-0.1
-  (package
-    (name "rust-android-tzdata")
-    (version "0.1.1")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "android-tzdata" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1w7ynjxrfs97xg3qlcdns4kgfpwcdv824g611fq32cag4cdr96g9"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t))
-    (home-page "https://github.com/RumovZ/android-tzdata")
-    (synopsis "Parser for the Android-specific tzdata file")
-    (description "Parser for the Android-specific tzdata file")
-    (license (list license:expat license:asl2.0))))
-
-(define-public rust-chrono-0.4
-  (package
-    (name "rust-chrono")
-    (version "0.4.31")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "chrono" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0f6vg67pipm8cziad2yms6a639pssnvysk1m05dd9crymmdnhb3z"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-android-tzdata" ,rust-android-tzdata-0.1)
-                       ("rust-arbitrary" ,rust-arbitrary-1)
-                       ("rust-iana-time-zone" ,rust-iana-time-zone-0.1)
-                       ("rust-js-sys" ,rust-js-sys-0.3)
-                       ("rust-num-traits" ,rust-num-traits-0.2)
-                       ("rust-pure-rust-locales" ,rust-pure-rust-locales-0.7)
-                       ("rust-rkyv" ,rust-rkyv-0.7)
-                       ("rust-rustc-serialize" ,rust-rustc-serialize-0.3)
-                       ("rust-serde" ,rust-serde-1)
-                       ("rust-wasm-bindgen" ,rust-wasm-bindgen-0.2)
-                       ("rust-windows-targets" ,rust-windows-targets-0.48))))
-    (home-page "https://github.com/chronotope/chrono")
-    (synopsis "Date and time library for Rust")
-    (description "Date and time library for Rust")
-    (license (list license:expat license:asl2.0))))
-
 (define-public rust-trash-3
   (package
     (name "rust-trash")
-    (version "3.1.0")
+    (version "3.1.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "trash" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0pl2hb6zl9mpspf3c2h1kg7chv0pm6gbbjwhprxm6gzr1hmkzcpp"))))
+        (base32 "0604bq18pfjyh636c5spx58skq7maqg2phdy0n09hk8lwl460r4c"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -4459,6 +2236,78 @@ style defined by John Gruber for post titles on his website Daring Fireball.")
     (description "Represent an XML as a read-only tree.")
     (license (list license:expat license:asl2.0))))
 
+(define-public rust-regex-syntax-0.8
+  (package
+    (name "rust-regex-syntax")
+    (version "0.8.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "regex-syntax" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "17rd2s8xbiyf6lb4aj2nfi44zqlj98g2ays8zzj2vfs743k79360"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-arbitrary" ,rust-arbitrary-1))))
+    (home-page "https://github.com/rust-lang/regex/tree/master/regex-syntax")
+    (synopsis "A regular expression parser.")
+    (description "This package provides a regular expression parser.")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-regex-automata-0.4
+  (package
+    (name "rust-regex-automata")
+    (version "0.4.3")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "regex-automata" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0gs8q9yhd3kcg4pr00ag4viqxnh5l7jpyb9fsfr8hzh451w4r02z"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-aho-corasick" ,rust-aho-corasick-1)
+                       ("rust-log" ,rust-log-0.4)
+                       ("rust-memchr" ,rust-memchr-2)
+                       ("rust-regex-syntax" ,rust-regex-syntax-0.8))))
+    (home-page "https://github.com/rust-lang/regex/tree/master/regex-automata")
+    (synopsis "Automata construction and matching using regular expressions.")
+    (description
+     "Automata construction and matching using regular expressions.")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-regex-1
+  (package
+    (name "rust-regex")
+    (version "1.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "regex" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0hxkd814n4irind8im5c9am221ri6bprx49nc7yxv02ykhd9a2rq"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-aho-corasick" ,rust-aho-corasick-1)
+                       ("rust-memchr" ,rust-memchr-2)
+                       ("rust-regex-automata" ,rust-regex-automata-0.4)
+                       ("rust-regex-syntax" ,rust-regex-syntax-0.8))))
+    (home-page "https://github.com/rust-lang/regex")
+    (synopsis
+     "An implementation of regular expressions for Rust. This implementation uses
+finite automata and guarantees linear time matching on all inputs.
+")
+    (description
+     "An implementation of regular expressions for Rust.  This implementation uses
+finite automata and guarantees linear time matching on all inputs.")
+    (license (list license:expat license:asl2.0))))
+
 (define-public rust-rayon-core-1
   (package
     (name "rust-rayon-core")
@@ -4527,28 +2376,6 @@ clusters and ANSI escape sequences for accurate length arithmetic based on
 visible print positions.")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-powierza-coefficient-1
-  (package
-    (name "rust-powierza-coefficient")
-    (version "1.0.2")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "powierza-coefficient" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0nrpq1hvdnl7ddlgffrz0a36cvv7rbhyys0fzy6mc9h0fmwk04h4"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t))
-    (home-page "https://github.com/micouy/powierza-coefficient")
-    (synopsis
-     "PowierÅ¼a coefficient is a statistic for gauging if one string is an abbreviation of another")
-    (description
-     "@code{PowierÅ¼a} coefficient is a statistic for gauging if one string is an
-abbreviation of another")
-    (license license:expat)))
-
 (define-public rust-is-docker-0.2
   (package
     (name "rust-is-docker")
@@ -4615,21 +2442,21 @@ abbreviation of another")
      "Open a path or URL using the program configured on the system")
     (license license:expat)))
 
-(define-public rust-nu-term-grid-0.85
+(define-public rust-nu-term-grid-0.86
   (package
     (name "rust-nu-term-grid")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-term-grid" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1z4vl1af8xi6h9yc6ylqz9ry48lh0mfd2n17wwqnh2gsarcd9sqz"))))
+        (base32 "1rijc4cb5qshf519ya5fmzfg9f4szwwwhqh9ygj9fc0wpz1ygdjb"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-nu-utils" ,rust-nu-utils-0.85)
+       #:cargo-inputs (("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-unicode-width" ,rust-unicode-width-0.1))))
     (home-page
      "https://github.com/nushell/nushell/tree/main/crates/nu-term-grid")
@@ -4778,26 +2605,26 @@ ANSI strings")
      "An easy to use library for pretty print tables of Rust `struct`s and `enum`s.")
     (license license:expat)))
 
-(define-public rust-nu-table-0.85
+(define-public rust-nu-table-0.86
   (package
     (name "rust-nu-table")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-table" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1qwcavnkv4fdm5kwvbnsnscvg24aiq7lam1s316xczp10s24kh0s"))))
+        (base32 "1k4nhhzi2ld6d64skqafl92p2zj5bhmw57cy5ap8qb8j73v6zgry"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-fancy-regex" ,rust-fancy-regex-0.11)
                        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.49)
-                       ("rust-nu-color-config" ,rust-nu-color-config-0.85)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
+                       ("rust-nu-color-config" ,rust-nu-color-config-0.86)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-once-cell" ,rust-once-cell-1)
                        ("rust-tabled" ,rust-tabled-0.14))))
     (home-page "https://github.com/nushell/nushell/tree/main/crates/nu-table")
@@ -5051,100 +2878,6 @@ ANSI strings")
 @code{PostgreSQL}, SQLite, and @code{MySQL}")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-borsh-schema-derive-internal-0.10
-  (package
-    (name "rust-borsh-schema-derive-internal")
-    (version "0.10.3")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "borsh-schema-derive-internal" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1kaw1xdprb8chqj50c8gxjb5dadx1rac91zg8s81njpp8g60ahk3"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
-                       ("rust-quote" ,rust-quote-1)
-                       ("rust-syn" ,rust-syn-1))))
-    (home-page "https://borsh.io")
-    (synopsis "Schema Generator for Borsh
-")
-    (description "Schema Generator for Borsh")
-    (license license:asl2.0)))
-
-(define-public rust-borsh-derive-internal-0.10
-  (package
-    (name "rust-borsh-derive-internal")
-    (version "0.10.3")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "borsh-derive-internal" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1yx27ic6aal83bdi1h6v80wfs9ixvw51qzmdgcn8sn8rd4akid5g"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
-                       ("rust-quote" ,rust-quote-1)
-                       ("rust-syn" ,rust-syn-1))))
-    (home-page "https://borsh.io")
-    (synopsis "Binary Object Representation Serializer for Hashing
-")
-    (description "Binary Object Representation Serializer for Hashing")
-    (license license:asl2.0)))
-
-(define-public rust-borsh-derive-0.10
-  (package
-    (name "rust-borsh-derive")
-    (version "0.10.3")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "borsh-derive" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1xslbx3qj531aq8ny1bkr45ibjmpsx0szsfc57rm33akj4v62m07"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-borsh-derive-internal" ,rust-borsh-derive-internal-0.10)
-                       ("rust-borsh-schema-derive-internal" ,rust-borsh-schema-derive-internal-0.10)
-                       ("rust-proc-macro-crate" ,rust-proc-macro-crate-0.1)
-                       ("rust-proc-macro2" ,rust-proc-macro2-1)
-                       ("rust-syn" ,rust-syn-1))))
-    (home-page "https://borsh.io")
-    (synopsis "Binary Object Representation Serializer for Hashing
-")
-    (description "Binary Object Representation Serializer for Hashing")
-    (license license:asl2.0)))
-
-(define-public rust-borsh-0.10
-  (package
-    (name "rust-borsh")
-    (version "0.10.3")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "borsh" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0sq4l9jfik5dmpy1islcj40bing1jkji2q1qbrkvq1d02n92f521"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-borsh-derive" ,rust-borsh-derive-0.10)
-                       ("rust-bytes" ,rust-bytes-1)
-                       ("rust-hashbrown" ,rust-hashbrown-0.13))))
-    (home-page "https://borsh.io")
-    (synopsis "Binary Object Representation Serializer for Hashing
-")
-    (description "Binary Object Representation Serializer for Hashing")
-    (license (list license:expat license:asl2.0))))
-
 (define-public rust-rust-decimal-1
   (package
     (name "rust-rust-decimal")
@@ -5206,6 +2939,31 @@ fixed-precision calculations.")
     (description
      "This package provides a dateutil-compatible timestamp parser for Rust")
     (license license:asl2.0)))
+
+(define-public rust-dialoguer-0.11
+  (package
+    (name "rust-dialoguer")
+    (version "0.11.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "dialoguer" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1pl0744wwr97kp8qnaybzgrfwk66qakzq0i1qrxl03vpbn0cx2v5"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-console" ,rust-console-0.15)
+                       ("rust-fuzzy-matcher" ,rust-fuzzy-matcher-0.3)
+                       ("rust-shell-words" ,rust-shell-words-1)
+                       ("rust-tempfile" ,rust-tempfile-3)
+                       ("rust-thiserror" ,rust-thiserror-1)
+                       ("rust-zeroize" ,rust-zeroize-1))))
+    (home-page "https://github.com/console-rs/dialoguer")
+    (synopsis "A command line prompting library.")
+    (description "This package provides a command line prompting library.")
+    (license license:expat)))
 
 (define-public rust-csv-core-0.1
   (package
@@ -5327,6 +3085,27 @@ fixed-precision calculations.")
      "An Excel/@code{OpenDocument} Spreadsheets reader and deserializer in pure rust")
     (license license:expat)))
 
+(define-public rust-byteorder-1
+  (package
+    (name "rust-byteorder")
+    (version "1.5.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "byteorder" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0jzncxyf404mwqdbspihyzpkndfgda450l0893pz5xj685cg5l0z"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t))
+    (home-page "https://github.com/BurntSushi/byteorder")
+    (synopsis
+     "Library for reading/writing numbers in big-endian and little-endian.")
+    (description
+     "Library for reading/writing numbers in big-endian and little-endian.")
+    (license (list license:unlicense license:expat))))
+
 (define-public rust-bracoxide-0.1
   (package
     (name "rust-bracoxide")
@@ -5371,17 +3150,17 @@ permutation generation, and error handling.")
 numerals.")
     (license license:expat)))
 
-(define-public rust-nu-command-0.85
+(define-public rust-nu-command-0.86
   (package
     (name "rust-nu-command")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-command" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0k5wy2a5gxsvmf9qzppys60az9g1nx58v2q67pi9j663ny5mck34"))))
+        (base32 "1sc4bh8ivc7mvp8jz9szkpkvmd8m46wyb4xxb0z9idf82nbn3xhg"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -5397,7 +3176,7 @@ numerals.")
                        ("rust-chrono-tz" ,rust-chrono-tz-0.8)
                        ("rust-crossterm" ,rust-crossterm-0.27)
                        ("rust-csv" ,rust-csv-1)
-                       ("rust-dialoguer" ,rust-dialoguer-0.10)
+                       ("rust-dialoguer" ,rust-dialoguer-0.11)
                        ("rust-digest" ,rust-digest-0.10)
                        ("rust-dtparse" ,rust-dtparse-2)
                        ("rust-encoding-rs" ,rust-encoding-rs-0.8)
@@ -5420,19 +3199,19 @@ numerals.")
                        ("rust-nix" ,rust-nix-0.27)
                        ("rust-notify-debouncer-full" ,rust-notify-debouncer-full-0.3)
                        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.49)
-                       ("rust-nu-cmd-base" ,rust-nu-cmd-base-0.85)
-                       ("rust-nu-color-config" ,rust-nu-color-config-0.85)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-glob" ,rust-nu-glob-0.85)
-                       ("rust-nu-json" ,rust-nu-json-0.85)
-                       ("rust-nu-parser" ,rust-nu-parser-0.85)
-                       ("rust-nu-path" ,rust-nu-path-0.85)
-                       ("rust-nu-pretty-hex" ,rust-nu-pretty-hex-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-                       ("rust-nu-system" ,rust-nu-system-0.85)
-                       ("rust-nu-table" ,rust-nu-table-0.85)
-                       ("rust-nu-term-grid" ,rust-nu-term-grid-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
+                       ("rust-nu-cmd-base" ,rust-nu-cmd-base-0.86)
+                       ("rust-nu-color-config" ,rust-nu-color-config-0.86)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-glob" ,rust-nu-glob-0.86)
+                       ("rust-nu-json" ,rust-nu-json-0.86)
+                       ("rust-nu-parser" ,rust-nu-parser-0.86)
+                       ("rust-nu-path" ,rust-nu-path-0.86)
+                       ("rust-nu-pretty-hex" ,rust-nu-pretty-hex-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
+                       ("rust-nu-system" ,rust-nu-system-0.86)
+                       ("rust-nu-table" ,rust-nu-table-0.86)
+                       ("rust-nu-term-grid" ,rust-nu-term-grid-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-num" ,rust-num-0.4)
                        ("rust-num-format" ,rust-num-format-0.4)
                        ("rust-num-traits" ,rust-num-traits-0.2)
@@ -5441,7 +3220,6 @@ numerals.")
                        ("rust-os-pipe" ,rust-os-pipe-1)
                        ("rust-pathdiff" ,rust-pathdiff-0.2)
                        ("rust-percent-encoding" ,rust-percent-encoding-2)
-                       ("rust-powierza-coefficient" ,rust-powierza-coefficient-1)
                        ("rust-print-positions" ,rust-print-positions-0.6)
                        ("rust-quick-xml" ,rust-quick-xml-0.30)
                        ("rust-rand" ,rust-rand-0.8)
@@ -5465,9 +3243,9 @@ numerals.")
                        ("rust-unicode-segmentation" ,rust-unicode-segmentation-1)
                        ("rust-ureq" ,rust-ureq-2)
                        ("rust-url" ,rust-url-2)
-                       ("rust-uu-cp" ,rust-uu-cp-0.0.21)
+                       ("rust-uu-cp" ,rust-uu-cp-0.0.22)
                        ("rust-uuid" ,rust-uuid-1)
-                       ("rust-wax" ,rust-wax-0.5)
+                       ("rust-wax" ,rust-wax-0.6)
                        ("rust-which" ,rust-which-4)
                        ("rust-windows" ,rust-windows-0.48)
                        ("rust-winreg" ,rust-winreg-0.51))))
@@ -5569,17 +3347,17 @@ gmtime and mktime.")
     (description "Native bindings to the libssh2 library")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-libgit2-sys-0.15
+(define-public rust-libgit2-sys-0.16
   (package
     (name "rust-libgit2-sys")
-    (version "0.15.2+1.6.4")
+    (version "0.16.1+1.7.1")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "libgit2-sys" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1yllyq9wiryy257cfx8s7wadls24yzkxnhmbl95iz9ml3zhz43d8"))))
+        (base32 "030dnq7hz79qs4rxdllc3ailvqzc432jwwxk7g8av55hh0vbp8pj"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -5594,23 +3372,23 @@ gmtime and mktime.")
     (description "Native bindings to the libgit2 library")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-git2-0.17
+(define-public rust-git2-0.18
   (package
     (name "rust-git2")
-    (version "0.17.2")
+    (version "0.18.1")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "git2" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0i00kg3yizh7mn6hnj3yz3hpniisidlavifgy8n3cnm9gim9v63v"))))
+        (base32 "1kf0kvg3i7p1223zs2h9fz99ndm0l9kdx3hcw63g73dh5nlppygv"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-bitflags" ,rust-bitflags-1)
+       #:cargo-inputs (("rust-bitflags" ,rust-bitflags-2)
                        ("rust-libc" ,rust-libc-0.2)
-                       ("rust-libgit2-sys" ,rust-libgit2-sys-0.15)
+                       ("rust-libgit2-sys" ,rust-libgit2-sys-0.16)
                        ("rust-log" ,rust-log-0.4)
                        ("rust-openssl-probe" ,rust-openssl-probe-0.1)
                        ("rust-openssl-sys" ,rust-openssl-sys-0.9)
@@ -5733,23 +3511,23 @@ repositories.")
     (description "Compile-time string formatting")
     (license license:zlib)))
 
-(define-public rust-shadow-rs-0.23
+(define-public rust-shadow-rs-0.24
   (package
     (name "rust-shadow-rs")
-    (version "0.23.0")
+    (version "0.24.1")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "shadow-rs" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0013fhbpgravpbwidrqgghg6dysacy09zf4cxjs0pzan8xq3h1cp"))))
+        (base32 "0xqcw27hf8ybxlzhnnx5k0dvb5lq6yydsjv6yrfilky9y6pqq6gr"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-const-format" ,rust-const-format-0.2)
                        ("rust-document-features" ,rust-document-features-0.2)
-                       ("rust-git2" ,rust-git2-0.17)
+                       ("rust-git2" ,rust-git2-0.18)
                        ("rust-is-debug" ,rust-is-debug-1)
                        ("rust-time" ,rust-time-0.3)
                        ("rust-tzdb" ,rust-tzdb-0.5))))
@@ -5759,29 +3537,29 @@ repositories.")
      "This package provides a build-time information stored in your rust project")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-nu-cmd-lang-0.85
+(define-public rust-nu-cmd-lang-0.86
   (package
     (name "rust-nu-cmd-lang")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-cmd-lang" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1yzir6mwnyias14mlf15hsx9l4ayncdc4i6zrm8g9gqg0j8l4jgd"))))
+        (base32 "0aqw3lbj3ndi8j24m0g223s7rwvx9chcpipl74pjxwpcly9czpwx"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-fancy-regex" ,rust-fancy-regex-0.11)
                        ("rust-itertools" ,rust-itertools-0.11)
                        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.49)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-parser" ,rust-nu-parser-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
-                       ("rust-shadow-rs" ,rust-shadow-rs-0.23)
-                       ("rust-shadow-rs" ,rust-shadow-rs-0.23))))
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-parser" ,rust-nu-parser-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
+                       ("rust-shadow-rs" ,rust-shadow-rs-0.24)
+                       ("rust-shadow-rs" ,rust-shadow-rs-0.24))))
     (home-page
      "https://github.com/nushell/nushell/tree/main/crates/nu-cmd-lang")
     (synopsis "Nushell's core language commands")
@@ -6897,49 +4675,6 @@ your own custom string type).")
     (description "This package provides a pear is a fruit.")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-bytemuck-derive-1
-  (package
-    (name "rust-bytemuck-derive")
-    (version "1.5.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "bytemuck_derive" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1cgj75df2v32l4fmvnp25xxkkz4lp6hz76f7hfhd55wgbzmvfnln"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
-                       ("rust-quote" ,rust-quote-1)
-                       ("rust-syn" ,rust-syn-2))))
-    (home-page "https://github.com/Lokathor/bytemuck")
-    (synopsis "derive proc-macros for `bytemuck`")
-    (description "derive proc-macros for `bytemuck`")
-    (license (list license:zlib license:asl2.0 license:expat))))
-
-(define-public rust-bytemuck-1
-  (package
-    (name "rust-bytemuck")
-    (version "1.14.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "bytemuck" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1ik1ma5n3bg700skkzhx50zjk7kj7mbsphi773if17l04pn2hk9p"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-bytemuck-derive" ,rust-bytemuck-derive-1))))
-    (home-page "https://github.com/Lokathor/bytemuck")
-    (synopsis "A crate for mucking around with piles of bytes.")
-    (description
-     "This package provides a crate for mucking around with piles of bytes.")
-    (license (list license:zlib license:asl2.0 license:expat))))
-
 (define-public rust-atomic-0.6
   (package
     (name "rust-atomic")
@@ -7090,88 +4825,6 @@ your own custom string type).")
     (description
      "An implementation of SSL streams for Tokio backed by @code{OpenSSL}")
     (license (list license:expat license:asl2.0))))
-
-(define-public rust-tokio-macros-2
-  (package
-    (name "rust-tokio-macros")
-    (version "2.1.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "tokio-macros" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0pk7y9dfanab886iaqwcbri39jkw33kgl7y07v0kg1pp8prdq2v3"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
-                       ("rust-quote" ,rust-quote-1)
-                       ("rust-syn" ,rust-syn-2))))
-    (home-page "https://tokio.rs")
-    (synopsis "Tokio's proc macros.
-")
-    (description "Tokio's proc macros.")
-    (license license:expat)))
-
-(define-public rust-pin-project-lite-0.2
-  (package
-    (name "rust-pin-project-lite")
-    (version "0.2.13")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "pin-project-lite" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0n0bwr5qxlf0mhn2xkl36sy55118s9qmvx2yl5f3ixkb007lbywa"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t))
-    (home-page "https://github.com/taiki-e/pin-project-lite")
-    (synopsis
-     "A lightweight version of pin-project written with declarative macros.
-")
-    (description
-     "This package provides a lightweight version of pin-project written with
-declarative macros.")
-    (license (list license:asl2.0 license:expat))))
-
-(define-public rust-tokio-1
-  (package
-    (name "rust-tokio")
-    (version "1.33.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "tokio" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0lynj8nfqziviw72qns9mjlhmnm66bsc5bivy5g5x6gp7q720f2g"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-backtrace" ,rust-backtrace-0.3)
-                       ("rust-bytes" ,rust-bytes-1)
-                       ("rust-libc" ,rust-libc-0.2)
-                       ("rust-mio" ,rust-mio-0.8)
-                       ("rust-num-cpus" ,rust-num-cpus-1)
-                       ("rust-parking-lot" ,rust-parking-lot-0.12)
-                       ("rust-pin-project-lite" ,rust-pin-project-lite-0.2)
-                       ("rust-signal-hook-registry" ,rust-signal-hook-registry-1)
-                       ("rust-socket2" ,rust-socket2-0.5)
-                       ("rust-tokio-macros" ,rust-tokio-macros-2)
-                       ("rust-tracing" ,rust-tracing-0.1)
-                       ("rust-windows-sys" ,rust-windows-sys-0.48))))
-    (home-page "https://tokio.rs")
-    (synopsis
-     "An event-driven, non-blocking I/O platform for writing asynchronous I/O
-backed applications.
-")
-    (description
-     "An event-driven, non-blocking I/O platform for writing asynchronous I/O backed
-applications.")
-    (license license:expat)))
 
 (define-public rust-tokio-metrics-0.3
   (package
@@ -7432,31 +5085,6 @@ performance")
     (synopsis "Redis driver for Rust.")
     (description "Redis driver for Rust.")
     (license license:bsd-3)))
-
-(define-public rust-quick-xml-0.30
-  (package
-    (name "rust-quick-xml")
-    (version "0.30.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "quick-xml" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0mp9cqy06blsaka3r1n2p40ddmzhsf7bx37x22r5faw6hq753xpg"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-arbitrary" ,rust-arbitrary-1)
-                       ("rust-document-features" ,rust-document-features-0.2)
-                       ("rust-encoding-rs" ,rust-encoding-rs-0.8)
-                       ("rust-memchr" ,rust-memchr-2)
-                       ("rust-serde" ,rust-serde-1)
-                       ("rust-tokio" ,rust-tokio-1))))
-    (home-page "https://github.com/tafia/quick-xml")
-    (synopsis "High performance xml reader and writer")
-    (description "High performance xml reader and writer")
-    (license license:expat)))
 
 (define-public rust-priority-queue-1
   (package
@@ -8983,32 +6611,6 @@ deflation and runtime lazy inflation")
     (description "Routing and runtime macros for Actix Web")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-socket2-0.5
-  (package
-    (name "rust-socket2")
-    (version "0.5.4")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "socket2" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "17lqx8w2b3nysrkdbdz8y7fkikz5v77c052q57lxwajmxchfhca0"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-libc" ,rust-libc-0.2)
-                       ("rust-windows-sys" ,rust-windows-sys-0.48))))
-    (home-page "https://github.com/rust-lang/socket2")
-    (synopsis
-     "Utilities for handling networking sockets with a maximal amount of configuration
-possible intended.
-")
-    (description
-     "Utilities for handling networking sockets with a maximal amount of configuration
-possible intended.")
-    (license (list license:expat license:asl2.0))))
-
 (define-public rust-actix-server-2
   (package
     (name "rust-actix-server")
@@ -9657,17 +7259,17 @@ operations.")
 during release and loads the file from the fs during dev")
     (license license:expat)))
 
-(define-public rust-nu-pretty-hex-0.85
+(define-public rust-nu-pretty-hex-0.86
   (package
     (name "rust-nu-pretty-hex")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-pretty-hex" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1897c0rg1pd217fgqpd7ilg5mkq8aazdwy1s6y43vc38mlv5ww9d"))))
+        (base32 "1fr7mzff4vavqqs47amzw7i8xf8a9d1vfdq8v0ji91c0vh12rm0g"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -9678,32 +7280,32 @@ during release and loads the file from the fs during dev")
     (description "Pretty hex dump of bytes slice in the common style.")
     (license license:expat)))
 
-(define-public rust-nu-cmd-extra-0.85
+(define-public rust-nu-cmd-extra-0.86
   (package
     (name "rust-nu-cmd-extra")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-cmd-extra" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0ck391cxhpggy8xmm9hl2jz1amsm5qrbqkszhrvf1rwv17kkwk6j"))))
+        (base32 "1pj6gv1fggyyas3xvyiy56iqrwx3vymz30gimjf64dc0h8jh5g37"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-ahash" ,rust-ahash-0.8)
                        ("rust-fancy-regex" ,rust-fancy-regex-0.11)
+                       ("rust-heck" ,rust-heck-0.4)
                        ("rust-htmlescape" ,rust-htmlescape-0.3)
-                       ("rust-inflector" ,rust-inflector-0.11)
                        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.49)
-                       ("rust-nu-cmd-base" ,rust-nu-cmd-base-0.85)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-json" ,rust-nu-json-0.85)
-                       ("rust-nu-parser" ,rust-nu-parser-0.85)
-                       ("rust-nu-pretty-hex" ,rust-nu-pretty-hex-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
+                       ("rust-nu-cmd-base" ,rust-nu-cmd-base-0.86)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-json" ,rust-nu-json-0.86)
+                       ("rust-nu-parser" ,rust-nu-parser-0.86)
+                       ("rust-nu-pretty-hex" ,rust-nu-pretty-hex-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-num-traits" ,rust-num-traits-0.2)
                        ("rust-rust-embed" ,rust-rust-embed-8)
                        ("rust-serde" ,rust-serde-1)
@@ -9741,14 +7343,14 @@ during release and loads the file from the fs during dev")
 (define-public rust-bigdecimal-0.4
   (package
     (name "rust-bigdecimal")
-    (version "0.4.1")
+    (version "0.4.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "bigdecimal" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1jwlan62x9w874fxdjnldl70xnxfj38mw83gas5vh5q6n4ywljs5"))))
+        (base32 "1jcbzgna6292vgq0slw5iah929wl0xbps22zr63bp99y8az1jrn0"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -9788,24 +7390,24 @@ during release and loads the file from the fs during dev")
      "Extensible SQL Lexer and Parser with support for ANSI SQL:2011")
     (license license:asl2.0)))
 
-(define-public rust-polars-sql-0.32
+(define-public rust-polars-sql-0.33
   (package
     (name "rust-polars-sql")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-sql" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1x7jzkkv8dh7bxc90qijqs2d8z41ac0rs4142zm2bggfz1fb3z6v"))))
+        (base32 "1z2n2i3h41k8kskq7pwpf4zy6l76237nhzr84bvicdby4ranhwad"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-polars-arrow" ,rust-polars-arrow-0.32)
-                       ("rust-polars-core" ,rust-polars-core-0.32)
-                       ("rust-polars-lazy" ,rust-polars-lazy-0.32)
-                       ("rust-polars-plan" ,rust-polars-plan-0.32)
+       #:cargo-inputs (("rust-polars-arrow" ,rust-polars-arrow-0.33)
+                       ("rust-polars-core" ,rust-polars-core-0.33)
+                       ("rust-polars-lazy" ,rust-polars-lazy-0.33)
+                       ("rust-polars-plan" ,rust-polars-plan-0.33)
                        ("rust-serde" ,rust-serde-1)
                        ("rust-serde-json" ,rust-serde-json-1)
                        ("rust-sqlparser" ,rust-sqlparser-0.36))))
@@ -9816,33 +7418,80 @@ during release and loads the file from the fs during dev")
      "SQL transpiler for Polars.  Converts SQL to Polars logical plans")
     (license license:expat)))
 
-(define-public rust-polars-plan-0.32
+(define-public rust-polars-ffi-0.33
+  (package
+    (name "rust-polars-ffi")
+    (version "0.33.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "polars-ffi" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0cw07k7pdlhmx5f7p5kzrpd3s8qaml4zv952gfizcf9wfyhjr3m9"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-arrow2" ,rust-arrow2-0.18)
+                       ("rust-polars-core" ,rust-polars-core-0.33))))
+    (home-page "https://www.pola.rs/")
+    (synopsis "FFI utils for the Polars project.")
+    (description "FFI utils for the Polars project.")
+    (license license:expat)))
+
+(define-public rust-libloading-0.8
+  (package
+    (name "rust-libloading")
+    (version "0.8.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "libloading" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0q812zvfag4m803ak640znl6cf8ngdd0ilzky498r6pwvmvbcwf5"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-cfg-if" ,rust-cfg-if-1)
+                       ("rust-windows-sys" ,rust-windows-sys-0.48))))
+    (home-page "https://github.com/nagisa/rust_libloading/")
+    (synopsis
+     "Bindings around the platform's dynamic library loading primitives with greatly improved memory safety.")
+    (description
+     "Bindings around the platform's dynamic library loading primitives with greatly
+improved memory safety.")
+    (license license:isc)))
+
+(define-public rust-polars-plan-0.33
   (package
     (name "rust-polars-plan")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-plan" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0dfs2qxq6hn43gajx2i4pjrpgm36ss8llh44pffqwpi9y0ab0rzv"))))
+        (base32 "17ia6ajf9h26n3m6gikl788wcks52lni0i6qz3q517p262vvx337"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-ahash" ,rust-ahash-0.8)
-                       ("rust-arrow2" ,rust-arrow2-0.17)
+                       ("rust-arrow2" ,rust-arrow2-0.18)
                        ("rust-chrono" ,rust-chrono-0.4)
                        ("rust-chrono-tz" ,rust-chrono-tz-0.8)
                        ("rust-ciborium" ,rust-ciborium-0.2)
                        ("rust-futures" ,rust-futures-0.3)
+                       ("rust-libloading" ,rust-libloading-0.8)
                        ("rust-once-cell" ,rust-once-cell-1)
-                       ("rust-polars-arrow" ,rust-polars-arrow-0.32)
-                       ("rust-polars-core" ,rust-polars-core-0.32)
-                       ("rust-polars-io" ,rust-polars-io-0.32)
-                       ("rust-polars-ops" ,rust-polars-ops-0.32)
-                       ("rust-polars-time" ,rust-polars-time-0.32)
-                       ("rust-polars-utils" ,rust-polars-utils-0.32)
+                       ("rust-polars-arrow" ,rust-polars-arrow-0.33)
+                       ("rust-polars-core" ,rust-polars-core-0.33)
+                       ("rust-polars-ffi" ,rust-polars-ffi-0.33)
+                       ("rust-polars-io" ,rust-polars-io-0.33)
+                       ("rust-polars-ops" ,rust-polars-ops-0.33)
+                       ("rust-polars-time" ,rust-polars-time-0.33)
+                       ("rust-polars-utils" ,rust-polars-utils-0.33)
                        ("rust-pyo3" ,rust-pyo3-0.19)
                        ("rust-rayon" ,rust-rayon-1)
                        ("rust-regex" ,rust-regex-1)
@@ -9855,17 +7504,17 @@ during release and loads the file from the fs during dev")
     (description "Lazy query engine for the Polars @code{DataFrame} library")
     (license license:expat)))
 
-(define-public rust-polars-pipe-0.32
+(define-public rust-polars-pipe-0.33
   (package
     (name "rust-polars-pipe")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-pipe" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0x391i33is41gafkkdksbf2f8rdkhz5xnlfbn0zh9vd95nhwjaqz"))))
+        (base32 "0frwlg2jmn4bg4fpwxjfr6lynbys47hf4vx4b34xv52mgkkwac0z"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -9874,19 +7523,157 @@ during release and loads the file from the fs during dev")
                        ("rust-enum-dispatch" ,rust-enum-dispatch-0.3)
                        ("rust-hashbrown" ,rust-hashbrown-0.14)
                        ("rust-num-traits" ,rust-num-traits-0.2)
-                       ("rust-polars-arrow" ,rust-polars-arrow-0.32)
-                       ("rust-polars-core" ,rust-polars-core-0.32)
-                       ("rust-polars-io" ,rust-polars-io-0.32)
-                       ("rust-polars-ops" ,rust-polars-ops-0.32)
-                       ("rust-polars-plan" ,rust-polars-plan-0.32)
-                       ("rust-polars-row" ,rust-polars-row-0.32)
-                       ("rust-polars-utils" ,rust-polars-utils-0.32)
+                       ("rust-polars-arrow" ,rust-polars-arrow-0.33)
+                       ("rust-polars-core" ,rust-polars-core-0.33)
+                       ("rust-polars-io" ,rust-polars-io-0.33)
+                       ("rust-polars-ops" ,rust-polars-ops-0.33)
+                       ("rust-polars-plan" ,rust-polars-plan-0.33)
+                       ("rust-polars-row" ,rust-polars-row-0.33)
+                       ("rust-polars-utils" ,rust-polars-utils-0.33)
                        ("rust-rayon" ,rust-rayon-1)
                        ("rust-smartstring" ,rust-smartstring-1)
                        ("rust-version-check" ,rust-version-check-0.9))))
     (home-page "https://www.pola.rs/")
     (synopsis "Lazy query engine for the Polars DataFrame library")
     (description "Lazy query engine for the Polars @code{DataFrame} library")
+    (license license:expat)))
+
+(define-public rust-tokio-macros-2
+  (package
+    (name "rust-tokio-macros")
+    (version "2.1.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "tokio-macros" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0pk7y9dfanab886iaqwcbri39jkw33kgl7y07v0kg1pp8prdq2v3"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
+                       ("rust-quote" ,rust-quote-1)
+                       ("rust-syn" ,rust-syn-2))))
+    (home-page "https://tokio.rs")
+    (synopsis "Tokio's proc macros.
+")
+    (description "Tokio's proc macros.")
+    (license license:expat)))
+
+(define-public rust-socket2-0.5
+  (package
+    (name "rust-socket2")
+    (version "0.5.4")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "socket2" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "17lqx8w2b3nysrkdbdz8y7fkikz5v77c052q57lxwajmxchfhca0"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-libc" ,rust-libc-0.2)
+                       ("rust-windows-sys" ,rust-windows-sys-0.48))))
+    (home-page "https://github.com/rust-lang/socket2")
+    (synopsis
+     "Utilities for handling networking sockets with a maximal amount of configuration
+possible intended.
+")
+    (description
+     "Utilities for handling networking sockets with a maximal amount of configuration
+possible intended.")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-tokio-1
+  (package
+    (name "rust-tokio")
+    (version "1.33.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "tokio" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0lynj8nfqziviw72qns9mjlhmnm66bsc5bivy5g5x6gp7q720f2g"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-backtrace" ,rust-backtrace-0.3)
+                       ("rust-bytes" ,rust-bytes-1)
+                       ("rust-libc" ,rust-libc-0.2)
+                       ("rust-mio" ,rust-mio-0.8)
+                       ("rust-num-cpus" ,rust-num-cpus-1)
+                       ("rust-parking-lot" ,rust-parking-lot-0.12)
+                       ("rust-pin-project-lite" ,rust-pin-project-lite-0.2)
+                       ("rust-signal-hook-registry" ,rust-signal-hook-registry-1)
+                       ("rust-socket2" ,rust-socket2-0.5)
+                       ("rust-tokio-macros" ,rust-tokio-macros-2)
+                       ("rust-tracing" ,rust-tracing-0.1)
+                       ("rust-windows-sys" ,rust-windows-sys-0.48))))
+    (home-page "https://tokio.rs")
+    (synopsis
+     "An event-driven, non-blocking I/O platform for writing asynchronous I/O
+backed applications.
+")
+    (description
+     "An event-driven, non-blocking I/O platform for writing asynchronous I/O backed
+applications.")
+    (license license:expat)))
+
+(define-public rust-pin-project-lite-0.2
+  (package
+    (name "rust-pin-project-lite")
+    (version "0.2.13")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "pin-project-lite" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0n0bwr5qxlf0mhn2xkl36sy55118s9qmvx2yl5f3ixkb007lbywa"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t))
+    (home-page "https://github.com/taiki-e/pin-project-lite")
+    (synopsis
+     "A lightweight version of pin-project written with declarative macros.
+")
+    (description
+     "This package provides a lightweight version of pin-project written with
+declarative macros.")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-tokio-util-0.7
+  (package
+    (name "rust-tokio-util")
+    (version "0.7.9")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "tokio-util" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "03d63ivnd8pwi6qzrlw0gyqkiawq5vmkb5sdb4hhnypm4130fs0x"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-bytes" ,rust-bytes-1)
+                       ("rust-futures-core" ,rust-futures-core-0.3)
+                       ("rust-futures-io" ,rust-futures-io-0.3)
+                       ("rust-futures-sink" ,rust-futures-sink-0.3)
+                       ("rust-futures-util" ,rust-futures-util-0.3)
+                       ("rust-hashbrown" ,rust-hashbrown-0.12)
+                       ("rust-pin-project-lite" ,rust-pin-project-lite-0.2)
+                       ("rust-slab" ,rust-slab-0.4)
+                       ("rust-tokio" ,rust-tokio-1)
+                       ("rust-tracing" ,rust-tracing-0.1))))
+    (home-page "https://tokio.rs")
+    (synopsis "Additional utilities for working with Tokio.
+")
+    (description "Additional utilities for working with Tokio.")
     (license license:expat)))
 
 (define-public rust-argminmax-0.6
@@ -9916,22 +7703,22 @@ during release and loads the file from the fs during dev")
 integers")
     (license license:expat)))
 
-(define-public rust-polars-ops-0.32
+(define-public rust-polars-ops-0.33
   (package
     (name "rust-polars-ops")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-ops" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1l4yhkcd82g1qjpnmkavqn93q0w0443a01f2vyp2sb9hjrf5f9g8"))))
+        (base32 "0lj2rv391qwqnrs1j3g8hzbdgz8nw4w9cnggz528181c9jydfh3p"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-argminmax" ,rust-argminmax-0.6)
-                       ("rust-arrow2" ,rust-arrow2-0.17)
+                       ("rust-arrow2" ,rust-arrow2-0.18)
                        ("rust-base64" ,rust-base64-0.21)
                        ("rust-chrono" ,rust-chrono-0.4)
                        ("rust-chrono-tz" ,rust-chrono-tz-0.8)
@@ -9940,10 +7727,11 @@ integers")
                        ("rust-indexmap" ,rust-indexmap-2)
                        ("rust-jsonpath-lib" ,rust-jsonpath-lib-0.3)
                        ("rust-memchr" ,rust-memchr-2)
-                       ("rust-polars-arrow" ,rust-polars-arrow-0.32)
-                       ("rust-polars-core" ,rust-polars-core-0.32)
-                       ("rust-polars-json" ,rust-polars-json-0.32)
-                       ("rust-polars-utils" ,rust-polars-utils-0.32)
+                       ("rust-polars-arrow" ,rust-polars-arrow-0.33)
+                       ("rust-polars-core" ,rust-polars-core-0.33)
+                       ("rust-polars-json" ,rust-polars-json-0.33)
+                       ("rust-polars-utils" ,rust-polars-utils-0.33)
+                       ("rust-regex" ,rust-regex-1)
                        ("rust-serde" ,rust-serde-1)
                        ("rust-serde-json" ,rust-serde-json-1)
                        ("rust-smartstring" ,rust-smartstring-1)
@@ -9973,30 +7761,30 @@ integers")
     (description "a time toolkit for chrono")
     (license license:expat)))
 
-(define-public rust-polars-time-0.32
+(define-public rust-polars-time-0.33
   (package
     (name "rust-polars-time")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-time" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1spczdg0q2pbqs5zbfs01j89dydirz5k6784fnair5zm68k2vx2k"))))
+        (base32 "0qvh2aqqai6yjsagj4d98smaljg9lfi1kp2j1d05md8i9yi7bsx2"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-arrow2" ,rust-arrow2-0.17)
+       #:cargo-inputs (("rust-arrow2" ,rust-arrow2-0.18)
                        ("rust-atoi" ,rust-atoi-2)
                        ("rust-chrono" ,rust-chrono-0.4)
                        ("rust-chrono-tz" ,rust-chrono-tz-0.8)
                        ("rust-now" ,rust-now-0.1)
                        ("rust-once-cell" ,rust-once-cell-1)
-                       ("rust-polars-arrow" ,rust-polars-arrow-0.32)
-                       ("rust-polars-core" ,rust-polars-core-0.32)
-                       ("rust-polars-ops" ,rust-polars-ops-0.32)
-                       ("rust-polars-utils" ,rust-polars-utils-0.32)
+                       ("rust-polars-arrow" ,rust-polars-arrow-0.33)
+                       ("rust-polars-core" ,rust-polars-core-0.33)
+                       ("rust-polars-ops" ,rust-polars-ops-0.33)
+                       ("rust-polars-utils" ,rust-polars-utils-0.33)
                        ("rust-regex" ,rust-regex-1)
                        ("rust-serde" ,rust-serde-1)
                        ("rust-smartstring" ,rust-smartstring-1))))
@@ -10046,33 +7834,33 @@ integers")
     (description "Type-level strings")
     (license license:zlib)))
 
-(define-public rust-regex-1
-  (package
-    (name "rust-regex")
-    (version "1.2.1")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "regex" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "09jww0faqvdprr9482ppxm1asbp6lhihr8zl9ma5sa4474cxkhw8"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-aho-corasick" ,rust-aho-corasick-0.7)
-                       ("rust-memchr" ,rust-memchr-2)
-                       ("rust-regex-syntax" ,rust-regex-syntax-0.6)
-                       ("rust-thread-local" ,rust-thread-local-0.3))))
-    (home-page "https://github.com/rust-lang/regex")
-    (synopsis
-     "An implementation of regular expressions for Rust. This implementation uses
-finite automata and guarantees linear time matching on all inputs.
-")
-    (description
-     "An implementation of regular expressions for Rust.  This implementation uses
-finite automata and guarantees linear time matching on all inputs.")
-    (license (list license:expat license:asl2.0))))
+;; (define-public rust-regex-1
+;;   (package
+;;     (name "rust-regex")
+;;     (version "1.2.1")
+;;     (source
+;;      (origin
+;;        (method url-fetch)
+;;        (uri (crate-uri "regex" version))
+;;        (file-name (string-append name "-" version ".tar.gz"))
+;;        (sha256
+;;         (base32 "09jww0faqvdprr9482ppxm1asbp6lhihr8zl9ma5sa4474cxkhw8"))))
+;;     (build-system cargo-build-system)
+;;     (arguments
+;;      `(#:skip-build? #t
+;;        #:cargo-inputs (("rust-aho-corasick" ,rust-aho-corasick-0.7)
+;;                        ("rust-memchr" ,rust-memchr-2)
+;;                        ("rust-regex-syntax" ,rust-regex-syntax-0.6)
+;;                        ("rust-thread-local" ,rust-thread-local-0.3))))
+;;     (home-page "https://github.com/rust-lang/regex")
+;;     (synopsis
+;;      "An implementation of regular expressions for Rust. This implementation uses
+;; finite automata and guarantees linear time matching on all inputs.
+;; ")
+;;     (description
+;;      "An implementation of regular expressions for Rust.  This implementation uses
+;; finite automata and guarantees linear time matching on all inputs.")
+;;     (license (list license:expat license:asl2.0))))
 
 (define-public rust-core-extensions-0.1
   (package
@@ -10484,25 +8272,6 @@ suffering from the ABA problem by using generational indices.")
     (description "Traits to deal with JSONesque values")
     (license (list license:asl2.0 license:expat))))
 
-(define-public rust-simdutf8-0.1
-  (package
-    (name "rust-simdutf8")
-    (version "0.1.4")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "simdutf8" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0fi6zvnldaw7g726wnm9vvpv4s89s5jsk7fgp3rg2l99amw64zzj"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t))
-    (home-page "https://github.com/rusticstuff/simdutf8")
-    (synopsis "SIMD-accelerated UTF-8 validation.")
-    (description "SIMD-accelerated UTF-8 validation.")
-    (license (list license:expat license:asl2.0))))
-
 (define-public rust-x86-0.47
   (package
     (name "rust-x86")
@@ -10707,29 +8476,29 @@ allocations on an expression or function basis.")
     (description "High performance JSON parser based on a port of simdjson")
     (license (list license:asl2.0 license:expat))))
 
-(define-public rust-polars-json-0.32
+(define-public rust-polars-json-0.33
   (package
     (name "rust-polars-json")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-json" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "153faq2mbcr456h6wzw52lcbcpc8jyvxqj3kij04cr6gax2hjn4y"))))
+        (base32 "1f3ya8bg0k4vpsgqz59xifa92cy8jxssa1jsxxm710fnfrhndmfn"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-ahash" ,rust-ahash-0.8)
-                       ("rust-arrow2" ,rust-arrow2-0.17)
+                       ("rust-arrow2" ,rust-arrow2-0.18)
                        ("rust-fallible-streaming-iterator" ,rust-fallible-streaming-iterator-0.1)
                        ("rust-hashbrown" ,rust-hashbrown-0.14)
                        ("rust-indexmap" ,rust-indexmap-2)
                        ("rust-num-traits" ,rust-num-traits-0.2)
-                       ("rust-polars-arrow" ,rust-polars-arrow-0.32)
-                       ("rust-polars-error" ,rust-polars-error-0.32)
-                       ("rust-polars-utils" ,rust-polars-utils-0.32)
+                       ("rust-polars-arrow" ,rust-polars-arrow-0.33)
+                       ("rust-polars-error" ,rust-polars-error-0.33)
+                       ("rust-polars-utils" ,rust-polars-utils-0.33)
                        ("rust-simd-json" ,rust-simd-json-0.10))))
     (home-page "https://www.pola.rs/")
     (synopsis "JSON related logic for the Polars DataFrame library")
@@ -10757,6 +8526,343 @@ allocations on an expression or function basis.")
     (description "Cross-platform Rust API for memory-mapped file IO")
     (license (list license:expat license:asl2.0))))
 
+(define-public rust-sval-test-2
+  (package
+    (name "rust-sval-test")
+    (version "2.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "sval_test" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0bgbcdl7vniil0xiyvxscmzcwymhz2w2iywqgxjmc5c0krzg0hd4"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-sval" ,rust-sval-2)
+                       ("rust-sval-fmt" ,rust-sval-fmt-2))))
+    (home-page "https://github.com/sval-rs/sval")
+    (synopsis "Utilities for testing sval::Value implementations")
+    (description "Utilities for testing sval::Value implementations")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-sval-serde-2
+  (package
+    (name "rust-sval-serde")
+    (version "2.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "sval_serde" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "11h543cmg0qmprc7jn94crfxwv344wa04qf18hw7xdh5zz293wbz"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-serde" ,rust-serde-1)
+                       ("rust-sval" ,rust-sval-2)
+                       ("rust-sval-buffer" ,rust-sval-buffer-2)
+                       ("rust-sval-fmt" ,rust-sval-fmt-2))))
+    (home-page "https://github.com/sval-rs/sval")
+    (synopsis "Integration between serde::Serialize and sval::Value")
+    (description "Integration between serde::Serialize and sval::Value")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-sval-json-2
+  (package
+    (name "rust-sval-json")
+    (version "2.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "sval_json" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0wp0yyaldqr6kgqsblav86j8fxjp2jbmrsbsiw0yxrhambc3pq3n"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-itoa" ,rust-itoa-1)
+                       ("rust-ryu" ,rust-ryu-1)
+                       ("rust-sval" ,rust-sval-2))))
+    (home-page "https://github.com/sval-rs/sval")
+    (synopsis "JSON support for sval")
+    (description "JSON support for sval")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-sval-fmt-2
+  (package
+    (name "rust-sval-fmt")
+    (version "2.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "sval_fmt" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0hqkjb7blcdqjlawnffmw0bq5gxf98i52lbgcnjabxr64a47ybsk"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-itoa" ,rust-itoa-1)
+                       ("rust-ryu" ,rust-ryu-1)
+                       ("rust-sval" ,rust-sval-2))))
+    (home-page "https://github.com/sval-rs/sval")
+    (synopsis "Integration between std::fmt::Debug and sval::Value")
+    (description "Integration between std::fmt::Debug and sval::Value")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-sval-dynamic-2
+  (package
+    (name "rust-sval-dynamic")
+    (version "2.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "sval_dynamic" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1f2p3xvq5qyg0w721as7dxrgqgrfqsc0m7qp2r1pn7fvkqjx54wx"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-sval" ,rust-sval-2))))
+    (home-page "https://github.com/sval-rs/sval")
+    (synopsis "Object-safe versions of sval::Stream and sval::Value")
+    (description "Object-safe versions of sval::Stream and sval::Value")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-sval-buffer-2
+  (package
+    (name "rust-sval-buffer")
+    (version "2.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "sval_buffer" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0yglk3ma67605f28mwip09maf531mm1fak2pdr2a1klapib0bs2p"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-sval" ,rust-sval-2)
+                       ("rust-sval-ref" ,rust-sval-ref-2))))
+    (home-page "https://github.com/sval-rs/sval")
+    (synopsis "Value buffering for sval")
+    (description "Value buffering for sval")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-value-bag-sval2-1
+  (package
+    (name "rust-value-bag-sval2")
+    (version "1.4.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "value-bag-sval2" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0i899mjnryxw0sp92n8qgnm1s2m56ba27l3qazsbnmqah486rq63"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-sval" ,rust-sval-2)
+                       ("rust-sval-buffer" ,rust-sval-buffer-2)
+                       ("rust-sval-dynamic" ,rust-sval-dynamic-2)
+                       ("rust-sval-fmt" ,rust-sval-fmt-2)
+                       ("rust-sval-json" ,rust-sval-json-2)
+                       ("rust-sval-ref" ,rust-sval-ref-2)
+                       ("rust-sval-serde" ,rust-sval-serde-2)
+                       ("rust-sval-test" ,rust-sval-test-2))))
+    (home-page "")
+    (synopsis "Implementation detail for value-bag")
+    (description "Implementation detail for value-bag")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-serde-buf-0.1
+  (package
+    (name "rust-serde-buf")
+    (version "0.1.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "serde_buf" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1k2nc3pa7rbzyhhnjakw6nkx2wa6da6nrxf65s6p2d3xdjfvx1is"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-serde" ,rust-serde-1))))
+    (home-page "https://github.com/KodrAus/serde_buf.git")
+    (synopsis "Generic buffering for serde")
+    (description "Generic buffering for serde")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-value-bag-serde1-1
+  (package
+    (name "rust-value-bag-serde1")
+    (version "1.4.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "value-bag-serde1" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1gsp0cn62ay2qq52wzck0j66iavf9k03y6ipmnx3bjqyg7f3kfh7"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-erased-serde" ,rust-erased-serde-0.3)
+                       ("rust-serde" ,rust-serde-1)
+                       ("rust-serde-buf" ,rust-serde-buf-0.1)
+                       ("rust-serde-fmt" ,rust-serde-fmt-1)
+                       ("rust-serde-json" ,rust-serde-json-1)
+                       ("rust-serde-test" ,rust-serde-test-1))))
+    (home-page "")
+    (synopsis "Implementation detail for value-bag")
+    (description "Implementation detail for value-bag")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-value-bag-1
+  (package
+    (name "rust-value-bag")
+    (version "1.4.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "value-bag" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1gjvsnhhf9jp8h62zin6azqrpmgmnxq2ppj72d2dcayy5n8f2wja"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-value-bag-serde1" ,rust-value-bag-serde1-1)
+                       ("rust-value-bag-sval2" ,rust-value-bag-sval2-1))))
+    (home-page "https://github.com/sval-rs/value-bag")
+    (synopsis "Anonymous structured values")
+    (description "Anonymous structured values")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-sval-ref-2
+  (package
+    (name "rust-sval-ref")
+    (version "2.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "sval_ref" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1qd9w4iqp8z7v0mf7icz1409g48jnibyrh9nbnms1hmq5x7hbvbm"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-sval" ,rust-sval-2))))
+    (home-page "https://github.com/sval-rs/sval")
+    (synopsis "A variant of sval::Value for types with internal references")
+    (description
+     "This package provides a variant of sval::Value for types with internal
+references")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-sval-derive-macros-2
+  (package
+    (name "rust-sval-derive-macros")
+    (version "2.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "sval_derive_macros" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "11vmfpr028n4z9x0nlaqa1v7p4fij6fz7wxbr3mmizp9v6267nry"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
+                       ("rust-quote" ,rust-quote-1)
+                       ("rust-syn" ,rust-syn-2))))
+    (home-page "https://github.com/sval-rs/sval")
+    (synopsis "Minimal derive support for `sval`")
+    (description "Minimal derive support for `sval`")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-sval-2
+  (package
+    (name "rust-sval")
+    (version "2.10.2")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "sval" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0wq8dpcwkxf9i5ivaqgi736kalqdsn88yhsb9fh1dhmpilmg2pdi"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-sval-derive-macros" ,rust-sval-derive-macros-2))))
+    (home-page "https://github.com/sval-rs/sval")
+    (synopsis "Streaming, structured value serialization")
+    (description "Streaming, structured value serialization")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-log-0.4
+  (package
+    (name "rust-log")
+    (version "0.4.20")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "log" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "13rf7wphnwd61vazpxr7fiycin6cb1g8fmvgqg18i464p0y1drmm"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-serde" ,rust-serde-1)
+                       ("rust-sval" ,rust-sval-2)
+                       ("rust-sval-ref" ,rust-sval-ref-2)
+                       ("rust-value-bag" ,rust-value-bag-1))))
+    (home-page "https://github.com/rust-lang/log")
+    (synopsis "A lightweight logging facade for Rust
+")
+    (description "This package provides a lightweight logging facade for Rust")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-memchr-2
+  (package
+    (name "rust-memchr")
+    (version "2.6.4")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "memchr" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0rq1ka8790ns41j147npvxcqcl2anxyngsdimy85ag2api0fwrgn"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-compiler-builtins" ,rust-compiler-builtins-0.1)
+                       ("rust-log" ,rust-log-0.4)
+                       ("rust-rustc-std-workspace-core" ,rust-rustc-std-workspace-core-1))))
+    (home-page "https://github.com/BurntSushi/memchr")
+    (synopsis
+     "Provides extremely fast (uses SIMD on x86_64, aarch64 and wasm32) routines for
+1, 2 or 3 byte search and single substring search.
+")
+    (description
+     "This package provides extremely fast (uses SIMD on x86_64, aarch64 and wasm32)
+routines for 1, 2 or 3 byte search and single substring search.")
+    (license (list license:unlicense license:expat))))
+
 (define-public rust-home-0.5
   (package
     (name "rust-home")
@@ -10777,22 +8883,22 @@ allocations on an expression or function basis.")
     (description "Shared definitions of home directories.")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-polars-io-0.32
+(define-public rust-polars-io-0.33
   (package
     (name "rust-polars-io")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-io" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "172gycrd3lis2jggdb6hrplyi6mzmbgrxjdfllpp0d9akzgv1jlj"))))
+        (base32 "0d0zrwwbg2y2sdsvfyzwfrdarm0anndd3pxwvwhar44aq64lmkw8"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-ahash" ,rust-ahash-0.8)
-                       ("rust-arrow2" ,rust-arrow2-0.17)
+                       ("rust-arrow2" ,rust-arrow2-0.18)
                        ("rust-async-trait" ,rust-async-trait-0.1)
                        ("rust-bytes" ,rust-bytes-1)
                        ("rust-chrono" ,rust-chrono-0.4)
@@ -10806,14 +8912,14 @@ allocations on an expression or function basis.")
                        ("rust-memchr" ,rust-memchr-2)
                        ("rust-memmap2" ,rust-memmap2-0.7)
                        ("rust-num-traits" ,rust-num-traits-0.2)
-                       ("rust-object-store" ,rust-object-store-0.6)
+                       ("rust-object-store" ,rust-object-store-0.7)
                        ("rust-once-cell" ,rust-once-cell-1)
-                       ("rust-polars-arrow" ,rust-polars-arrow-0.32)
-                       ("rust-polars-core" ,rust-polars-core-0.32)
-                       ("rust-polars-error" ,rust-polars-error-0.32)
-                       ("rust-polars-json" ,rust-polars-json-0.32)
-                       ("rust-polars-time" ,rust-polars-time-0.32)
-                       ("rust-polars-utils" ,rust-polars-utils-0.32)
+                       ("rust-polars-arrow" ,rust-polars-arrow-0.33)
+                       ("rust-polars-core" ,rust-polars-core-0.33)
+                       ("rust-polars-error" ,rust-polars-error-0.33)
+                       ("rust-polars-json" ,rust-polars-json-0.33)
+                       ("rust-polars-time" ,rust-polars-time-0.33)
+                       ("rust-polars-utils" ,rust-polars-utils-0.33)
                        ("rust-rayon" ,rust-rayon-1)
                        ("rust-regex" ,rust-regex-1)
                        ("rust-serde" ,rust-serde-1)
@@ -10821,23 +8927,24 @@ allocations on an expression or function basis.")
                        ("rust-simd-json" ,rust-simd-json-0.10)
                        ("rust-simdutf8" ,rust-simdutf8-0.1)
                        ("rust-tokio" ,rust-tokio-1)
+                       ("rust-tokio-util" ,rust-tokio-util-0.7)
                        ("rust-url" ,rust-url-2))))
     (home-page "https://www.pola.rs/")
     (synopsis "IO related logic for the Polars DataFrame library")
     (description "IO related logic for the Polars @code{DataFrame} library")
     (license license:expat)))
 
-(define-public rust-polars-lazy-0.32
+(define-public rust-polars-lazy-0.33
   (package
     (name "rust-polars-lazy")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-lazy" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0mhlysn2m9cixga9p4mklfh70z15hvdk8svpz34h2pm5q8p7ccrc"))))
+        (base32 "1kqgcfr4y1rka9qv803hf3yn7chvnb2znhgmqlf9i34472sfl42i"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -10845,15 +8952,15 @@ allocations on an expression or function basis.")
                        ("rust-bitflags" ,rust-bitflags-2)
                        ("rust-glob" ,rust-glob-0.3)
                        ("rust-once-cell" ,rust-once-cell-1)
-                       ("rust-polars-arrow" ,rust-polars-arrow-0.32)
-                       ("rust-polars-core" ,rust-polars-core-0.32)
-                       ("rust-polars-io" ,rust-polars-io-0.32)
-                       ("rust-polars-json" ,rust-polars-json-0.32)
-                       ("rust-polars-ops" ,rust-polars-ops-0.32)
-                       ("rust-polars-pipe" ,rust-polars-pipe-0.32)
-                       ("rust-polars-plan" ,rust-polars-plan-0.32)
-                       ("rust-polars-time" ,rust-polars-time-0.32)
-                       ("rust-polars-utils" ,rust-polars-utils-0.32)
+                       ("rust-polars-arrow" ,rust-polars-arrow-0.33)
+                       ("rust-polars-core" ,rust-polars-core-0.33)
+                       ("rust-polars-io" ,rust-polars-io-0.33)
+                       ("rust-polars-json" ,rust-polars-json-0.33)
+                       ("rust-polars-ops" ,rust-polars-ops-0.33)
+                       ("rust-polars-pipe" ,rust-polars-pipe-0.33)
+                       ("rust-polars-plan" ,rust-polars-plan-0.33)
+                       ("rust-polars-time" ,rust-polars-time-0.33)
+                       ("rust-polars-utils" ,rust-polars-utils-0.33)
                        ("rust-pyo3" ,rust-pyo3-0.19)
                        ("rust-rayon" ,rust-rayon-1)
                        ("rust-smartstring" ,rust-smartstring-1)
@@ -10882,25 +8989,26 @@ allocations on an expression or function basis.")
     (description "Implementation of xxhash")
     (license license:boost1.0)))
 
-(define-public rust-polars-utils-0.32
+(define-public rust-polars-utils-0.33
   (package
     (name "rust-polars-utils")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-utils" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0fgk1g6ibf236nkqn16w2k1y2yc41b0vpx5825pdqw8d6y5709n3"))))
+        (base32 "1xnfycj4fd8c1x53b8w3hisf57rjdvah94fkr8i662896ms5wjia"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-ahash" ,rust-ahash-0.8)
+                       ("rust-bytemuck" ,rust-bytemuck-1)
                        ("rust-hashbrown" ,rust-hashbrown-0.14)
                        ("rust-num-traits" ,rust-num-traits-0.2)
                        ("rust-once-cell" ,rust-once-cell-1)
-                       ("rust-polars-error" ,rust-polars-error-0.32)
+                       ("rust-polars-error" ,rust-polars-error-0.33)
                        ("rust-rayon" ,rust-rayon-1)
                        ("rust-smartstring" ,rust-smartstring-1)
                        ("rust-sysinfo" ,rust-sysinfo-0.29)
@@ -10910,43 +9018,44 @@ allocations on an expression or function basis.")
     (description "Private utils for the Polars @code{DataFrame} library")
     (license license:expat)))
 
-(define-public rust-polars-row-0.32
+(define-public rust-polars-row-0.33
   (package
     (name "rust-polars-row")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-row" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1gl6m439k8gambryvlcdiminnvfg6wl4zys834qgcyq2aqclrx97"))))
+        (base32 "1b0kqc1vpsfgqb6ij771yxizqydd46mzp54mhd4gh4wxbf4ghbn5"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-arrow2" ,rust-arrow2-0.17)
-                       ("rust-polars-error" ,rust-polars-error-0.32)
-                       ("rust-polars-utils" ,rust-polars-utils-0.32))))
+       #:cargo-inputs (("rust-arrow2" ,rust-arrow2-0.18)
+                       ("rust-polars-error" ,rust-polars-error-0.33)
+                       ("rust-polars-utils" ,rust-polars-utils-0.33))))
     (home-page "https://www.pola.rs/")
     (synopsis "Row encodings for the Polars DataFrame library")
     (description "Row encodings for the Polars @code{DataFrame} library")
     (license license:expat)))
 
-(define-public rust-polars-error-0.32
+(define-public rust-polars-error-0.33
   (package
     (name "rust-polars-error")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-error" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "02mcywb8xkdfmx4bmf81d2fa63s47289jmvvqcw3pr9pfcx9rl20"))))
+        (base32 "0jgrll191qrckm79a5mrh15rc5z05kf1jn4laj9rg6d2a6ba084v"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-arrow2" ,rust-arrow2-0.17)
+       #:cargo-inputs (("rust-arrow2" ,rust-arrow2-0.18)
+                       ("rust-object-store" ,rust-object-store-0.7)
                        ("rust-regex" ,rust-regex-1)
                        ("rust-thiserror" ,rust-thiserror-1))))
     (home-page "https://www.pola.rs/")
@@ -10974,21 +9083,21 @@ allocations on an expression or function basis.")
     (description "Parse integers directly from `[u8]` slices in safe code")
     (license license:expat)))
 
-(define-public rust-polars-arrow-0.32
+(define-public rust-polars-arrow-0.33
   (package
     (name "rust-polars-arrow")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-arrow" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0f0ig8cir1gzg72yyk00nglrgfl8hhkd24z8cizwm92xz80wjrzr"))))
+        (base32 "0a0qgzcf8p9vz3z3nd8xk1f9j71k6qx47zaf1sczv2dk9yk3ik9m"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-arrow2" ,rust-arrow2-0.17)
+       #:cargo-inputs (("rust-arrow2" ,rust-arrow2-0.18)
                        ("rust-atoi" ,rust-atoi-2)
                        ("rust-chrono" ,rust-chrono-0.4)
                        ("rust-chrono-tz" ,rust-chrono-tz-0.8)
@@ -10996,7 +9105,7 @@ allocations on an expression or function basis.")
                        ("rust-hashbrown" ,rust-hashbrown-0.14)
                        ("rust-multiversion" ,rust-multiversion-0.7)
                        ("rust-num-traits" ,rust-num-traits-0.2)
-                       ("rust-polars-error" ,rust-polars-error-0.32)
+                       ("rust-polars-error" ,rust-polars-error-0.33)
                        ("rust-serde" ,rust-serde-1)
                        ("rust-thiserror" ,rust-thiserror-1)
                        ("rust-version-check" ,rust-version-check-0.9))))
@@ -11005,17 +9114,17 @@ allocations on an expression or function basis.")
     (description "Arrow interfaces for Polars @code{DataFrame} library")
     (license license:expat)))
 
-(define-public rust-quick-xml-0.28
+(define-public rust-quick-xml-0.30
   (package
     (name "rust-quick-xml")
-    (version "0.28.2")
+    (version "0.30.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "quick-xml" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1lfr3512x0s0i9kbyglyzn0rq0i1bvd2mqqfi8gs685808rfgr8c"))))
+        (base32 "0mp9cqy06blsaka3r1n2p40ddmzhsf7bx37x22r5faw6hq753xpg"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -11030,17 +9139,17 @@ allocations on an expression or function basis.")
     (description "High performance xml reader and writer")
     (license license:expat)))
 
-(define-public rust-object-store-0.6
+(define-public rust-object-store-0.7
   (package
     (name "rust-object-store")
-    (version "0.6.1")
+    (version "0.7.1")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "object_store" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0n2x40wvcwshk5la6v1jg90k298xckzq4ja4b0cmfark9zdpdir7"))))
+        (base32 "1d5w3r2nbvdj5mihqlw1phnqi2dbmys9br6zfvkzdhxi8f5chc7r"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -11051,10 +9160,10 @@ allocations on an expression or function basis.")
                        ("rust-futures" ,rust-futures-0.3)
                        ("rust-humantime" ,rust-humantime-2)
                        ("rust-hyper" ,rust-hyper-0.14)
-                       ("rust-itertools" ,rust-itertools-0.10)
+                       ("rust-itertools" ,rust-itertools-0.11)
                        ("rust-parking-lot" ,rust-parking-lot-0.12)
                        ("rust-percent-encoding" ,rust-percent-encoding-2)
-                       ("rust-quick-xml" ,rust-quick-xml-0.28)
+                       ("rust-quick-xml" ,rust-quick-xml-0.30)
                        ("rust-rand" ,rust-rand-0.8)
                        ("rust-reqwest" ,rust-reqwest-0.11)
                        ("rust-ring" ,rust-ring-0.16)
@@ -11100,6 +9209,25 @@ with AWS S3, Google Cloud Storage, Azure Blob Storage and local files.")
      "An easy to use library for building beautiful tables with automatic content
 wrapping")
     (license license:expat)))
+
+(define-public rust-simdutf8-0.1
+  (package
+    (name "rust-simdutf8")
+    (version "0.1.4")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "simdutf8" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0fi6zvnldaw7g726wnm9vvpv4s89s5jsk7fgp3rg2l99amw64zzj"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t))
+    (home-page "https://github.com/rusticstuff/simdutf8")
+    (synopsis "SIMD-accelerated UTF-8 validation.")
+    (description "SIMD-accelerated UTF-8 validation.")
+    (license (list license:expat license:asl2.0))))
 
 (define-public rust-zstd-safe-6
   (package
@@ -11253,48 +9381,6 @@ algorithm.  Includes streaming compression and decompression.")
     (home-page "https://github.com/pseitz/lz4_flex")
     (synopsis "Fastest LZ4 implementation in Rust, no unsafe by default.")
     (description "Fastest LZ4 implementation in Rust, no unsafe by default.")
-    (license license:expat)))
-
-(define-public rust-lz4-sys-1
-  (package
-    (name "rust-lz4-sys")
-    (version "1.9.4")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "lz4-sys" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "0059ik4xlvnss5qfh6l691psk4g3350ljxaykzv10yr0gqqppljp"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-cc" ,rust-cc-1)
-                       ("rust-libc" ,rust-libc-0.2))))
-    (home-page "https://github.com/10xGenomics/lz4-rs")
-    (synopsis "Rust LZ4 sys package.")
-    (description "Rust LZ4 sys package.")
-    (license license:expat)))
-
-(define-public rust-lz4-1
-  (package
-    (name "rust-lz4")
-    (version "1.24.0")
-    (source
-     (origin
-       (method url-fetch)
-       (uri (crate-uri "lz4" version))
-       (file-name (string-append name "-" version ".tar.gz"))
-       (sha256
-        (base32 "1wad97k0asgvaj16ydd09gqs2yvgaanzcvqglrhffv7kdpc2v7ky"))))
-    (build-system cargo-build-system)
-    (arguments
-     `(#:skip-build? #t
-       #:cargo-inputs (("rust-libc" ,rust-libc-0.2)
-                       ("rust-lz4-sys" ,rust-lz4-sys-1))))
-    (home-page "https://github.com/10xGenomics/lz4-rs")
-    (synopsis "Rust LZ4 bindings library.")
-    (description "Rust LZ4 bindings library.")
     (license license:expat)))
 
 (define-public rust-async-stream-impl-0.3
@@ -11521,6 +9607,48 @@ algorithm.  Includes streaming compression and decompression.")
     (description "Easy function multiversioning")
     (license (list license:expat license:asl2.0))))
 
+(define-public rust-lz4-sys-1
+  (package
+    (name "rust-lz4-sys")
+    (version "1.9.4")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "lz4-sys" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0059ik4xlvnss5qfh6l691psk4g3350ljxaykzv10yr0gqqppljp"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-cc" ,rust-cc-1)
+                       ("rust-libc" ,rust-libc-0.2))))
+    (home-page "https://github.com/10xGenomics/lz4-rs")
+    (synopsis "Rust LZ4 sys package.")
+    (description "Rust LZ4 sys package.")
+    (license license:expat)))
+
+(define-public rust-lz4-1
+  (package
+    (name "rust-lz4")
+    (version "1.24.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "lz4" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1wad97k0asgvaj16ydd09gqs2yvgaanzcvqglrhffv7kdpc2v7ky"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-libc" ,rust-libc-0.2)
+                       ("rust-lz4-sys" ,rust-lz4-sys-1))))
+    (home-page "https://github.com/10xGenomics/lz4-rs")
+    (synopsis "Rust LZ4 bindings library.")
+    (description "Rust LZ4 bindings library.")
+    (license license:expat)))
+
 (define-public rust-json-deserializer-0.4
   (package
     (name "rust-json-deserializer")
@@ -11619,6 +9747,30 @@ algorithm.  Includes streaming compression and decompression.")
     (home-page "https://github.com/nlordell/ethnum-rs")
     (synopsis "256-bit integer implementation")
     (description "256-bit integer implementation")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-either-1
+  (package
+    (name "rust-either")
+    (version "1.9.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "either" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "01qy3anr7jal5lpc20791vxrw0nl6vksb5j7x56q2fycgcyy8sm2"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-serde" ,rust-serde-1))))
+    (home-page "https://github.com/bluss/either")
+    (synopsis
+     "The enum `Either` with variants `Left` and `Right` is a general purpose sum type with two cases.
+")
+    (description
+     "The enum `Either` with variants `Left` and `Right` is a general purpose sum type
+with two cases.")
     (license (list license:expat license:asl2.0))))
 
 (define-public rust-csv-async-1
@@ -12598,6 +10750,128 @@ serialization library.")
     (description "Unofficial flatbuffers and tonic code of Apache Arrow spec")
     (license license:asl2.0)))
 
+(define-public rust-packed-simd-0.3
+  (package
+    (name "rust-packed-simd")
+    (version "0.3.9")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "packed_simd" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0bck71ngyhx9icy7q3xzgmjxkylysxm6hgif5rqp2xc71jphi7qz"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-cfg-if" ,rust-cfg-if-1)
+                       ("rust-core-arch" ,rust-core-arch-0.1)
+                       ("rust-num-traits" ,rust-num-traits-0.2)
+                       ("rust-sleef-sys" ,rust-sleef-sys-0.1))))
+    (home-page "https://github.com/rust-lang/packed_simd")
+    (synopsis "Portable Packed SIMD vectors")
+    (description "Portable Packed SIMD vectors")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-num-iter-0.1
+  (package
+    (name "rust-num-iter")
+    (version "0.1.43")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "num-iter" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0lp22isvzmmnidbq9n5kbdh8gj0zm3yhxv1ddsn5rp65530fc0vx"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-autocfg" ,rust-autocfg-1)
+                       ("rust-num-integer" ,rust-num-integer-0.1)
+                       ("rust-num-traits" ,rust-num-traits-0.2))))
+    (home-page "https://github.com/rust-num/num-iter")
+    (synopsis "External iterators for generic mathematics")
+    (description "External iterators for generic mathematics")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-num-integer-0.1
+  (package
+    (name "rust-num-integer")
+    (version "0.1.45")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "num-integer" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1ncwavvwdmsqzxnn65phv6c6nn72pnv9xhpmjd6a429mzf4k6p92"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-autocfg" ,rust-autocfg-1)
+                       ("rust-num-traits" ,rust-num-traits-0.2))))
+    (home-page "https://github.com/rust-num/num-integer")
+    (synopsis "Integer traits and functions")
+    (description "Integer traits and functions")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-num-complex-0.4
+  (package
+    (name "rust-num-complex")
+    (version "0.4.4")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "num-complex" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "051j73vvdj07kdlpqv056s3a50ragsx3183cbpl1shc51355g88v"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-bytecheck" ,rust-bytecheck-0.6)
+                       ("rust-bytemuck" ,rust-bytemuck-1)
+                       ("rust-num-traits" ,rust-num-traits-0.2)
+                       ("rust-rand" ,rust-rand-0.8)
+                       ("rust-rkyv" ,rust-rkyv-0.7)
+                       ("rust-serde" ,rust-serde-1))))
+    (home-page "https://github.com/rust-num/num-complex")
+    (synopsis "Complex numbers implementation for Rust")
+    (description "Complex numbers implementation for Rust")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-num-0.4
+  (package
+    (name "rust-num")
+    (version "0.4.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "num" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1bz7kvj94pyw4zi1pm7knziljzii218sw79ap8qfb81xkvb80ldh"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-num-bigint" ,rust-num-bigint-0.4)
+                       ("rust-num-complex" ,rust-num-complex-0.4)
+                       ("rust-num-integer" ,rust-num-integer-0.1)
+                       ("rust-num-iter" ,rust-num-iter-0.1)
+                       ("rust-num-rational" ,rust-num-rational-0.4)
+                       ("rust-num-traits" ,rust-num-traits-0.2))))
+    (home-page "https://github.com/rust-num/num")
+    (synopsis
+     "A collection of numeric types and traits for Rust, including bigint,
+complex, rational, range iterators, generic integers, and more!
+")
+    (description
+     "This package provides a collection of numeric types and traits for Rust,
+including bigint, complex, rational, range iterators, generic integers, and
+more!")
+    (license (list license:expat license:asl2.0))))
+
 (define-public rust-chrono-tz-build-0.2
   (package
     (name "rust-chrono-tz-build")
@@ -12648,17 +10922,88 @@ serialization library.")
      "@code{TimeZone} implementations for chrono from the IANA database")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-arrow-schema-43
+(define-public rust-pure-rust-locales-0.7
+  (package
+    (name "rust-pure-rust-locales")
+    (version "0.7.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "pure-rust-locales" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0cl46srhxzj0jlvfp73l8l9qw54qwa04zywaxdf73hidwqlsh0pd"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t))
+    (home-page "https://github.com/cecton/pure-rust-locales")
+    (synopsis
+     "Pure Rust locales imported directly from the GNU C Library. `LC_COLLATE` and `LC_CTYPE` are not yet supported.")
+    (description
+     "Pure Rust locales imported directly from the GNU C Library. `LC_COLLATE` and
+`LC_CTYPE` are not yet supported.")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-android-tzdata-0.1
+  (package
+    (name "rust-android-tzdata")
+    (version "0.1.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "android-tzdata" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1w7ynjxrfs97xg3qlcdns4kgfpwcdv824g611fq32cag4cdr96g9"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t))
+    (home-page "https://github.com/RumovZ/android-tzdata")
+    (synopsis "Parser for the Android-specific tzdata file")
+    (description "Parser for the Android-specific tzdata file")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-chrono-0.4
+  (package
+    (name "rust-chrono")
+    (version "0.4.31")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "chrono" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0f6vg67pipm8cziad2yms6a639pssnvysk1m05dd9crymmdnhb3z"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-android-tzdata" ,rust-android-tzdata-0.1)
+                       ("rust-arbitrary" ,rust-arbitrary-1)
+                       ("rust-iana-time-zone" ,rust-iana-time-zone-0.1)
+                       ("rust-js-sys" ,rust-js-sys-0.3)
+                       ("rust-num-traits" ,rust-num-traits-0.2)
+                       ("rust-pure-rust-locales" ,rust-pure-rust-locales-0.7)
+                       ("rust-rkyv" ,rust-rkyv-0.7)
+                       ("rust-rustc-serialize" ,rust-rustc-serialize-0.3)
+                       ("rust-serde" ,rust-serde-1)
+                       ("rust-wasm-bindgen" ,rust-wasm-bindgen-0.2)
+                       ("rust-windows-targets" ,rust-windows-targets-0.48))))
+    (home-page "https://github.com/chronotope/chrono")
+    (synopsis "Date and time library for Rust")
+    (description "Date and time library for Rust")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-arrow-schema-47
   (package
     (name "rust-arrow-schema")
-    (version "43.0.0")
+    (version "47.0.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "arrow-schema" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0zp8jz0pcr2d020rrmkdkzg6yizb2gc0fbfgzddb2w7mxrbwpsrb"))))
+        (base32 "0jyfw40m070zj2pv8mp3gvlnzs0mavnzn6qhw19qh5bv26f1f7ax"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -12669,22 +11014,22 @@ serialization library.")
     (description "Defines the logical types for arrow arrays")
     (license license:asl2.0)))
 
-(define-public rust-arrow-data-43
+(define-public rust-arrow-data-47
   (package
     (name "rust-arrow-data")
-    (version "43.0.0")
+    (version "47.0.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "arrow-data" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "12q2dvfaj78rfj5k3sfn8d3fnhwp3iizd4dbf5m14526qniz9x6l"))))
+        (base32 "0fpp09ykg6nb7jcaqnjzga242y7nlrfz3v0wlrf0kd68k4v4qnj7"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-arrow-buffer" ,rust-arrow-buffer-43)
-                       ("rust-arrow-schema" ,rust-arrow-schema-43)
+       #:cargo-inputs (("rust-arrow-buffer" ,rust-arrow-buffer-47)
+                       ("rust-arrow-schema" ,rust-arrow-schema-47)
                        ("rust-half" ,rust-half-2)
                        ("rust-num" ,rust-num-0.4))))
     (home-page "https://github.com/apache/arrow-rs")
@@ -12692,76 +11037,77 @@ serialization library.")
     (description "Array data abstractions for Apache Arrow")
     (license license:asl2.0)))
 
-(define-public rust-arrow-buffer-43
+(define-public rust-arrow-buffer-47
   (package
     (name "rust-arrow-buffer")
-    (version "43.0.0")
+    (version "47.0.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "arrow-buffer" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "08m7cxfksmc2qsygba0ingr1a3acbrxx9qdr0184wj3z0yg47gmx"))))
+        (base32 "15b1km7kb7cys2pdxgq1p9syiw7yzf9cch85rcw12504a8i1k8gx"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-half" ,rust-half-2)
+       #:cargo-inputs (("rust-bytes" ,rust-bytes-1)
+                       ("rust-half" ,rust-half-2)
                        ("rust-num" ,rust-num-0.4))))
     (home-page "https://github.com/apache/arrow-rs")
     (synopsis "Buffer abstractions for Apache Arrow")
     (description "Buffer abstractions for Apache Arrow")
     (license license:asl2.0)))
 
-(define-public rust-arrow-array-43
+(define-public rust-arrow-array-47
   (package
     (name "rust-arrow-array")
-    (version "43.0.0")
+    (version "47.0.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "arrow-array" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1l7k48p40b8j4nzda5z20b45zsaphm9yylzwryr8n7vxbxrfmmv3"))))
+        (base32 "139iwhc3j8mcn6avgjl4k3sc7g43kq92m02fbba05qgdadrglbnh"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-ahash" ,rust-ahash-0.8)
-                       ("rust-arrow-buffer" ,rust-arrow-buffer-43)
-                       ("rust-arrow-data" ,rust-arrow-data-43)
-                       ("rust-arrow-schema" ,rust-arrow-schema-43)
+                       ("rust-arrow-buffer" ,rust-arrow-buffer-47)
+                       ("rust-arrow-data" ,rust-arrow-data-47)
+                       ("rust-arrow-schema" ,rust-arrow-schema-47)
                        ("rust-chrono" ,rust-chrono-0.4)
                        ("rust-chrono-tz" ,rust-chrono-tz-0.8)
                        ("rust-half" ,rust-half-2)
                        ("rust-hashbrown" ,rust-hashbrown-0.14)
                        ("rust-num" ,rust-num-0.4)
-                       ("rust-packed-simd-2" ,rust-packed-simd-2-0.3))))
+                       ("rust-packed-simd" ,rust-packed-simd-0.3))))
     (home-page "https://github.com/apache/arrow-rs")
     (synopsis "Array abstractions for Apache Arrow")
     (description "Array abstractions for Apache Arrow")
     (license license:asl2.0)))
 
-(define-public rust-arrow2-0.17
+(define-public rust-arrow2-0.18
   (package
     (name "rust-arrow2")
-    (version "0.17.4")
+    (version "0.18.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "arrow2" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1yh40rdx0hwyag621byl6rk8w2jzvgvsj78sg1yp82qlxbd6ii2r"))))
+        (base32 "12fk0j37pchpfkwk3xgnyjclsqa5nfy27yjzkszwnyvmkd8fygwn"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-ahash" ,rust-ahash-0.8)
-                       ("rust-arrow-array" ,rust-arrow-array-43)
-                       ("rust-arrow-buffer" ,rust-arrow-buffer-43)
-                       ("rust-arrow-data" ,rust-arrow-data-43)
+                       ("rust-arrow-array" ,rust-arrow-array-47)
+                       ("rust-arrow-buffer" ,rust-arrow-buffer-47)
+                       ("rust-arrow-data" ,rust-arrow-data-47)
                        ("rust-arrow-format" ,rust-arrow-format-0.8)
-                       ("rust-arrow-schema" ,rust-arrow-schema-43)
+                       ("rust-arrow-schema" ,rust-arrow-schema-47)
                        ("rust-async-stream" ,rust-async-stream-0.3)
                        ("rust-avro-schema" ,rust-avro-schema-0.3)
                        ("rust-base64" ,rust-base64-0.21)
@@ -12780,7 +11126,7 @@ serialization library.")
                        ("rust-futures" ,rust-futures-0.3)
                        ("rust-getrandom" ,rust-getrandom-0.2)
                        ("rust-hash-hasher" ,rust-hash-hasher-2)
-                       ("rust-hashbrown" ,rust-hashbrown-0.13)
+                       ("rust-hashbrown" ,rust-hashbrown-0.14)
                        ("rust-hex" ,rust-hex-0.4)
                        ("rust-indexmap" ,rust-indexmap-1)
                        ("rust-itertools" ,rust-itertools-0.10)
@@ -12794,7 +11140,7 @@ serialization library.")
                        ("rust-parquet2" ,rust-parquet2-0.17)
                        ("rust-rand" ,rust-rand-0.8)
                        ("rust-regex" ,rust-regex-1)
-                       ("rust-regex-syntax" ,rust-regex-syntax-0.6)
+                       ("rust-regex-syntax" ,rust-regex-syntax-0.7)
                        ("rust-rustc-version" ,rust-rustc-version-0.4)
                        ("rust-serde" ,rust-serde-1)
                        ("rust-serde-derive" ,rust-serde-derive-1)
@@ -12808,22 +11154,22 @@ serialization library.")
     (description "Unofficial implementation of Apache Arrow spec in safe Rust")
     (license license:asl2.0)))
 
-(define-public rust-polars-core-0.32
+(define-public rust-polars-core-0.33
   (package
     (name "rust-polars-core")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-core" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "09h1wvg031pfjy9gbknacjbc1qkjz9yn1fasz27nczqnbgy94kxj"))))
+        (base32 "0wfa8pmlfdi2ybyah1cnhgza3cya4vwj9q402qa8zyh79h0pqdh8"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-ahash" ,rust-ahash-0.8)
-                       ("rust-arrow2" ,rust-arrow2-0.17)
+                       ("rust-arrow2" ,rust-arrow2-0.18)
                        ("rust-bitflags" ,rust-bitflags-2)
                        ("rust-chrono" ,rust-chrono-0.4)
                        ("rust-chrono-tz" ,rust-chrono-tz-0.8)
@@ -12834,12 +11180,12 @@ serialization library.")
                        ("rust-itoap" ,rust-itoap-1)
                        ("rust-ndarray" ,rust-ndarray-0.15)
                        ("rust-num-traits" ,rust-num-traits-0.2)
-                       ("rust-object-store" ,rust-object-store-0.6)
+                       ("rust-object-store" ,rust-object-store-0.7)
                        ("rust-once-cell" ,rust-once-cell-1)
-                       ("rust-polars-arrow" ,rust-polars-arrow-0.32)
-                       ("rust-polars-error" ,rust-polars-error-0.32)
-                       ("rust-polars-row" ,rust-polars-row-0.32)
-                       ("rust-polars-utils" ,rust-polars-utils-0.32)
+                       ("rust-polars-arrow" ,rust-polars-arrow-0.33)
+                       ("rust-polars-error" ,rust-polars-error-0.33)
+                       ("rust-polars-row" ,rust-polars-row-0.33)
+                       ("rust-polars-utils" ,rust-polars-utils-0.33)
                        ("rust-rand" ,rust-rand-0.8)
                        ("rust-rand-distr" ,rust-rand-distr-0.4)
                        ("rust-rayon" ,rust-rayon-1)
@@ -12856,79 +11202,79 @@ serialization library.")
     (description "Core of the Polars @code{DataFrame} library")
     (license license:expat)))
 
-(define-public rust-polars-algo-0.32
+(define-public rust-polars-algo-0.33
   (package
     (name "rust-polars-algo")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars-algo" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0y7pyg7piywl0399j0nvwg0qa2cb521kwn7qp43365mmr3pi5j1g"))))
+        (base32 "03lr7yhj9w4v42a8mha4gc33baf2fl78hs03a78lvfvyfrr6a4xd"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-polars-core" ,rust-polars-core-0.32)
-                       ("rust-polars-lazy" ,rust-polars-lazy-0.32)
-                       ("rust-polars-ops" ,rust-polars-ops-0.32))))
+       #:cargo-inputs (("rust-polars-core" ,rust-polars-core-0.33)
+                       ("rust-polars-lazy" ,rust-polars-lazy-0.33)
+                       ("rust-polars-ops" ,rust-polars-ops-0.33))))
     (home-page "https://www.pola.rs/")
     (synopsis "Algorithms built upon Polars primitives")
     (description "Algorithms built upon Polars primitives")
     (license license:expat)))
 
-(define-public rust-polars-0.32
+(define-public rust-polars-0.33
   (package
     (name "rust-polars")
-    (version "0.32.1")
+    (version "0.33.2")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "polars" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0ay5k3v451ix18sfjblazlib4f0p6sx3g2nq835vl3kc2d52sdmi"))))
+        (base32 "0snfb3abwbjrnbjd4z4fgjyg5h2wwadwnbd1r7dckwlz7cbdwc1h"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-getrandom" ,rust-getrandom-0.2)
-                       ("rust-polars-algo" ,rust-polars-algo-0.32)
-                       ("rust-polars-core" ,rust-polars-core-0.32)
-                       ("rust-polars-io" ,rust-polars-io-0.32)
-                       ("rust-polars-lazy" ,rust-polars-lazy-0.32)
-                       ("rust-polars-ops" ,rust-polars-ops-0.32)
-                       ("rust-polars-sql" ,rust-polars-sql-0.32)
-                       ("rust-polars-time" ,rust-polars-time-0.32)
+                       ("rust-polars-algo" ,rust-polars-algo-0.33)
+                       ("rust-polars-core" ,rust-polars-core-0.33)
+                       ("rust-polars-io" ,rust-polars-io-0.33)
+                       ("rust-polars-lazy" ,rust-polars-lazy-0.33)
+                       ("rust-polars-ops" ,rust-polars-ops-0.33)
+                       ("rust-polars-sql" ,rust-polars-sql-0.33)
+                       ("rust-polars-time" ,rust-polars-time-0.33)
                        ("rust-version-check" ,rust-version-check-0.9))))
     (home-page "https://www.pola.rs/")
     (synopsis "DataFrame library based on Apache Arrow")
     (description "@code{DataFrame} library based on Apache Arrow")
     (license license:expat)))
 
-(define-public rust-nu-cmd-dataframe-0.85
+(define-public rust-nu-cmd-dataframe-0.86
   (package
     (name "rust-nu-cmd-dataframe")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-cmd-dataframe" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0y338krm464mwf6ic4s43n7xzj2ld8n3lq3gzmam3c7w7s5pf6nq"))))
+        (base32 "0x8haq0kd00kgamzbcv5gdadcly5p528qxj2s4yqwdgaz478n7gw"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-chrono" ,rust-chrono-0.4)
                        ("rust-fancy-regex" ,rust-fancy-regex-0.11)
                        ("rust-indexmap" ,rust-indexmap-2)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-parser" ,rust-nu-parser-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-parser" ,rust-nu-parser-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
                        ("rust-num" ,rust-num-0.4)
-                       ("rust-polars" ,rust-polars-0.32)
-                       ("rust-polars-io" ,rust-polars-io-0.32)
+                       ("rust-polars" ,rust-polars-0.33)
+                       ("rust-polars-io" ,rust-polars-io-0.33)
                        ("rust-serde" ,rust-serde-1)
                        ("rust-sqlparser" ,rust-sqlparser-0.36))))
     (home-page
@@ -12936,6 +11282,198 @@ serialization library.")
     (synopsis "Nushell's dataframe commands based on polars.")
     (description "Nushell's dataframe commands based on polars.")
     (license license:expat)))
+
+(define-public rust-uuid-macro-internal-1
+  (package
+    (name "rust-uuid-macro-internal")
+    (version "1.5.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "uuid-macro-internal" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1bxdhbapp23b5wshx2dipyn1vfrj7dickvysa0lyi7hlkfx6p31x"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
+                       ("rust-quote" ,rust-quote-1)
+                       ("rust-syn" ,rust-syn-2))))
+    (home-page "")
+    (synopsis "Private implementation details of the uuid! macro.")
+    (description "Private implementation details of the uuid! macro.")
+    (license (list license:asl2.0 license:expat))))
+
+(define-public rust-bytemuck-derive-1
+  (package
+    (name "rust-bytemuck-derive")
+    (version "1.5.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "bytemuck_derive" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1cgj75df2v32l4fmvnp25xxkkz4lp6hz76f7hfhd55wgbzmvfnln"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
+                       ("rust-quote" ,rust-quote-1)
+                       ("rust-syn" ,rust-syn-2))))
+    (home-page "https://github.com/Lokathor/bytemuck")
+    (synopsis "derive proc-macros for `bytemuck`")
+    (description "derive proc-macros for `bytemuck`")
+    (license (list license:zlib license:asl2.0 license:expat))))
+
+(define-public rust-bytemuck-1
+  (package
+    (name "rust-bytemuck")
+    (version "1.14.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "bytemuck" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1ik1ma5n3bg700skkzhx50zjk7kj7mbsphi773if17l04pn2hk9p"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-bytemuck-derive" ,rust-bytemuck-derive-1))))
+    (home-page "https://github.com/Lokathor/bytemuck")
+    (synopsis "A crate for mucking around with piles of bytes.")
+    (description
+     "This package provides a crate for mucking around with piles of bytes.")
+    (license (list license:zlib license:asl2.0 license:expat))))
+
+(define-public rust-borsh-schema-derive-internal-0.10
+  (package
+    (name "rust-borsh-schema-derive-internal")
+    (version "0.10.3")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "borsh-schema-derive-internal" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1kaw1xdprb8chqj50c8gxjb5dadx1rac91zg8s81njpp8g60ahk3"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
+                       ("rust-quote" ,rust-quote-1)
+                       ("rust-syn" ,rust-syn-1))))
+    (home-page "https://borsh.io")
+    (synopsis "Schema Generator for Borsh
+")
+    (description "Schema Generator for Borsh")
+    (license license:asl2.0)))
+
+(define-public rust-borsh-derive-internal-0.10
+  (package
+    (name "rust-borsh-derive-internal")
+    (version "0.10.3")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "borsh-derive-internal" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1yx27ic6aal83bdi1h6v80wfs9ixvw51qzmdgcn8sn8rd4akid5g"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-proc-macro2" ,rust-proc-macro2-1)
+                       ("rust-quote" ,rust-quote-1)
+                       ("rust-syn" ,rust-syn-1))))
+    (home-page "https://borsh.io")
+    (synopsis "Binary Object Representation Serializer for Hashing
+")
+    (description "Binary Object Representation Serializer for Hashing")
+    (license license:asl2.0)))
+
+(define-public rust-borsh-derive-0.10
+  (package
+    (name "rust-borsh-derive")
+    (version "0.10.3")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "borsh-derive" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1xslbx3qj531aq8ny1bkr45ibjmpsx0szsfc57rm33akj4v62m07"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-borsh-derive-internal" ,rust-borsh-derive-internal-0.10)
+                       ("rust-borsh-schema-derive-internal" ,rust-borsh-schema-derive-internal-0.10)
+                       ("rust-proc-macro-crate" ,rust-proc-macro-crate-0.1)
+                       ("rust-proc-macro2" ,rust-proc-macro2-1)
+                       ("rust-syn" ,rust-syn-1))))
+    (home-page "https://borsh.io")
+    (synopsis "Binary Object Representation Serializer for Hashing
+")
+    (description "Binary Object Representation Serializer for Hashing")
+    (license license:asl2.0)))
+
+(define-public rust-borsh-0.10
+  (package
+    (name "rust-borsh")
+    (version "0.10.3")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "borsh" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0sq4l9jfik5dmpy1islcj40bing1jkji2q1qbrkvq1d02n92f521"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-borsh-derive" ,rust-borsh-derive-0.10)
+                       ("rust-bytes" ,rust-bytes-1)
+                       ("rust-hashbrown" ,rust-hashbrown-0.13))))
+    (home-page "https://borsh.io")
+    (synopsis "Binary Object Representation Serializer for Hashing
+")
+    (description "Binary Object Representation Serializer for Hashing")
+    (license (list license:expat license:asl2.0))))
+
+(define-public rust-uuid-1
+  (package
+    (name "rust-uuid")
+    (version "1.5.0")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "uuid" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "1z6dnvba224p8wvv4vx4xpgc2yxqy12sk4qh346sfh8baskmkbc8"))))
+    (build-system cargo-build-system)
+    (arguments
+     `(#:skip-build? #t
+       #:cargo-inputs (("rust-arbitrary" ,rust-arbitrary-1)
+                       ("rust-atomic" ,rust-atomic-0.5)
+                       ("rust-borsh" ,rust-borsh-0.10)
+                       ("rust-bytemuck" ,rust-bytemuck-1)
+                       ("rust-getrandom" ,rust-getrandom-0.2)
+                       ("rust-md-5" ,rust-md-5-0.10)
+                       ("rust-rand" ,rust-rand-0.8)
+                       ("rust-serde" ,rust-serde-1)
+                       ("rust-sha1-smol" ,rust-sha1-smol-1)
+                       ("rust-slog" ,rust-slog-2)
+                       ("rust-uuid-macro-internal" ,rust-uuid-macro-internal-1)
+                       ("rust-wasm-bindgen" ,rust-wasm-bindgen-0.2)
+                       ("rust-zerocopy" ,rust-zerocopy-0.6))))
+    (home-page "https://github.com/uuid-rs/uuid")
+    (synopsis "A library to generate and parse UUIDs.")
+    (description
+     "This package provides a library to generate and parse UUIDs.")
+    (license (list license:asl2.0 license:expat))))
 
 (define-public rust-unicode-segmentation-1
   (package
@@ -13077,14 +11615,14 @@ Unicode Standard Annex #29 rules.")
 (define-public rust-rustix-0.38
   (package
     (name "rust-rustix")
-    (version "0.38.19")
+    (version "0.38.20")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "rustix" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1vc61v3pgg4zhzwnpf5h0gl0k8gfw0vcnqcar1ijnsz6g2kwypkl"))))
+        (base32 "1858yxb7bk66br66m2wk9jflp9w7hgywrjyi60z91hhn5v5m1kk7"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -13220,17 +11758,17 @@ Unicode Standard Annex #29 rules.")
 of the OS-level clipboard.")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-reedline-0.24
+(define-public rust-reedline-0.25
   (package
     (name "rust-reedline")
-    (version "0.24.0")
+    (version "0.25.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "reedline" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0p756b9ncc8hqn2z2snrhziwr59b9izfngvzj8caw6kjf58c86lp"))))
+        (base32 "14b9s7r5wpmimcg1qgnz911crzm1mjbl686ckbvlq6cw6qfivp77"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -13256,17 +11794,17 @@ of the OS-level clipboard.")
      "This package provides a readline-like crate for CLI text input")
     (license license:expat)))
 
-(define-public rust-nu-json-0.85
+(define-public rust-nu-json-0.86
   (package
     (name "rust-nu-json")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-json" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "18b7flx117821yihb0fxvzg0qh0gllcfm8cbxkkvnz88a2xb76jl"))))
+        (base32 "0hps5lnj706z8biv6ayv6438wvnw3zpvbnlp73p47m5jjkrcz88m"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -13278,25 +11816,25 @@ of the OS-level clipboard.")
     (description "Fork of serde-hjson")
     (license license:expat)))
 
-(define-public rust-nu-color-config-0.85
+(define-public rust-nu-color-config-0.86
   (package
     (name "rust-nu-color-config")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-color-config" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1srvh87f31vwyxhkksnygh5s6qswmfmiv7mrbm6yv77xvd0vzi1m"))))
+        (base32 "0q7iyx8psylai7bsa4l1rh108hgwlzc2bjy7l4596365cqb98shd"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-nu-ansi-term" ,rust-nu-ansi-term-0.49)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-json" ,rust-nu-json-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-json" ,rust-nu-json-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-serde" ,rust-serde-1))))
     (home-page
      "https://github.com/nushell/nushell/tree/main/crates/nu-color-config")
@@ -13348,23 +11886,23 @@ of the OS-level clipboard.")
     (description "Serde bindings for RMP")
     (license license:expat)))
 
-(define-public rust-nu-plugin-0.85
+(define-public rust-nu-plugin-0.86
   (package
     (name "rust-nu-plugin")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-plugin" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "11z6lnnsbg1a5dxjmgjh82r805panw0hq2d15hzq4d69hnwx868v"))))
+        (base32 "0hahbdif97fa6kqky1zaaq79aq0wfjr4l5jbf4wbc9ngrjklh435"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-bincode" ,rust-bincode-1)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
                        ("rust-rmp-serde" ,rust-rmp-serde-1)
                        ("rust-serde" ,rust-serde-1)
                        ("rust-serde-json" ,rust-serde-json-1))))
@@ -13460,17 +11998,17 @@ of the OS-level clipboard.")
     (description "an utility for human-readable bytes representations")
     (license license:asl2.0)))
 
-(define-public rust-nu-parser-0.85
+(define-public rust-nu-parser-0.86
   (package
     (name "rust-nu-parser")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-parser" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0if5w5chh3lylnkg195w85xmimdq5frv8bsmvkfms4gfyd2d9zcd"))))
+        (base32 "1mx64hzxwk11bdq2zmbp6ls1m0n25hhj3awrw8sb0mw9xm8w7j3n"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -13478,10 +12016,10 @@ of the OS-level clipboard.")
                        ("rust-chrono" ,rust-chrono-0.4)
                        ("rust-itertools" ,rust-itertools-0.11)
                        ("rust-log" ,rust-log-0.4)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-path" ,rust-nu-path-0.85)
-                       ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-path" ,rust-nu-path-0.86)
+                       ("rust-nu-plugin" ,rust-nu-plugin-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
                        ("rust-serde-json" ,rust-serde-json-1))))
     (home-page "https://github.com/nushell/nushell/tree/main/crates/nu-parser")
     (synopsis "Nushell's parser")
@@ -13696,17 +12234,17 @@ terminals.")
     (description "Colorize paths using the LS_COLORS environment variable")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-nu-utils-0.85
+(define-public rust-nu-utils-0.86
   (package
     (name "rust-nu-utils")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-utils" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0lvcbhmk92c4sscpvpk75n1c1c0simapcg4pfnbngf3m1wnqjiy7"))))
+        (base32 "17xrdrh0fy9kjxrk8malnv5sv5fp1rfwfiaslxcivbad0wwqrmih"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -13974,17 +12512,17 @@ API to decouple token-based libraries from the procedural macro use case.")
 Mac OS X and Linux")
     (license license:expat)))
 
-(define-public rust-nu-system-0.85
+(define-public rust-nu-system-0.86
   (package
     (name "rust-nu-system")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-system" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0w6b7rz5gwywfqj29jva50rkfwkqbfszzr43dljl9nw67126q5n8"))))
+        (base32 "0sklzwrdls47m2mrxy13k0qchliszy70rd1g4rs2hn1zz2vk1awq"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -14024,17 +12562,17 @@ Mac OS X and Linux")
     (description "This package provides a LRU cache implementation")
     (license license:expat)))
 
-(define-public rust-nu-protocol-0.85
+(define-public rust-nu-protocol-0.86
   (package
     (name "rust-nu-protocol")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-protocol" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0m6q9563n9gyhzggzh67cj0z7r6k0hyh2vndiszfl4yim6y2kaab"))))
+        (base32 "1fmh5w049clp4d0hwmsik68b3zgh1l6kan5zdyvjsw9cm0fp92md"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -14045,9 +12583,9 @@ Mac OS X and Linux")
                        ("rust-indexmap" ,rust-indexmap-2)
                        ("rust-lru" ,rust-lru-0.11)
                        ("rust-miette" ,rust-miette-5)
-                       ("rust-nu-path" ,rust-nu-path-0.85)
-                       ("rust-nu-system" ,rust-nu-system-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
+                       ("rust-nu-path" ,rust-nu-path-0.86)
+                       ("rust-nu-system" ,rust-nu-system-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-num-format" ,rust-num-format-0.4)
                        ("rust-serde" ,rust-serde-1)
                        ("rust-serde-json" ,rust-serde-json-1)
@@ -14102,17 +12640,17 @@ Mac OS X and Linux")
     (description "Path utility library")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-nu-path-0.85
+(define-public rust-nu-path-0.86
   (package
     (name "rust-nu-path")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-path" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1bzkz4dlns8rvhk70c1a72d0mq69nz44wgr2ih0zmw2viqhf0dwx"))))
+        (base32 "1fkynjaw9b8q3dr16aq699hz2xw2cgs7ph3kpblymrspa2g9yhqc"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -14124,17 +12662,17 @@ Mac OS X and Linux")
     (description "Path handling library for Nushell")
     (license license:expat)))
 
-(define-public rust-nu-glob-0.85
+(define-public rust-nu-glob-0.86
   (package
     (name "rust-nu-glob")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-glob" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0fr5qxyvdsa6yvps8bvshxhx9x15iq2xf9xb9pw6kpqghwxx81g7"))))
+        (base32 "18fi029r2fqid59dd8pd5gfdgshaqfprkwzhm1fixjgkv47m6f15"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t))
@@ -14147,49 +12685,49 @@ Mac OS X and Linux")
 patterns.")
     (license (list license:expat license:asl2.0))))
 
-(define-public rust-nu-engine-0.85
+(define-public rust-nu-engine-0.86
   (package
     (name "rust-nu-engine")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-engine" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0yr57szlisabq92fzyank04ya707mlylpgm93lf6xxgf9k7rbjcx"))))
+        (base32 "0y29pl855mbr585pgj1bf3szpigvl9l5wr5p33l2spih50wsvjws"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
-       #:cargo-inputs (("rust-nu-glob" ,rust-nu-glob-0.85)
-                       ("rust-nu-path" ,rust-nu-path-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85))))
+       #:cargo-inputs (("rust-nu-glob" ,rust-nu-glob-0.86)
+                       ("rust-nu-path" ,rust-nu-path-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86))))
     (home-page "https://github.com/nushell/nushell/tree/main/crates/nu-engine")
     (synopsis "Nushell's evaluation engine")
     (description "Nushell's evaluation engine")
     (license license:expat)))
 
-(define-public rust-nu-cmd-base-0.85
+(define-public rust-nu-cmd-base-0.86
   (package
     (name "rust-nu-cmd-base")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-cmd-base" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0x6cmbfadkhh52aabcgxdxcqzmv02cn4nn54p11rryb31asy5rv2"))))
+        (base32 "1cp13za0qs24nfasblcrcmndjvnmp723qf4b7jqnxlz0gwdip9l4"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
        #:cargo-inputs (("rust-indexmap" ,rust-indexmap-2)
                        ("rust-miette" ,rust-miette-5)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-parser" ,rust-nu-parser-0.85)
-                       ("rust-nu-path" ,rust-nu-path-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85))))
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-parser" ,rust-nu-parser-0.86)
+                       ("rust-nu-path" ,rust-nu-path-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86))))
     (home-page
      "https://github.com/nushell/nushell/tree/main/crates/nu-cmd-base")
     (synopsis "The foundation tools to build Nushell commands.")
@@ -14220,17 +12758,17 @@ patterns.")
 including backreferences and look-around.")
     (license license:expat)))
 
-(define-public rust-nu-cli-0.85
+(define-public rust-nu-cli-0.86
   (package
     (name "rust-nu-cli")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu-cli" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1nzrkcgji7c6nkmf5mnjx16mi1rfqz4xjd9i4lpkxrmmcnc6ky3f"))))
+        (base32 "1v6lj1z4dn0ycqwmpqgni59n9rzyv1zh1mwkiv5ad66xib1fpdi3"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -14242,18 +12780,20 @@ including backreferences and look-around.")
                        ("rust-log" ,rust-log-0.4)
                        ("rust-miette" ,rust-miette-5)
                        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.49)
-                       ("rust-nu-cmd-base" ,rust-nu-cmd-base-0.85)
-                       ("rust-nu-color-config" ,rust-nu-color-config-0.85)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-parser" ,rust-nu-parser-0.85)
-                       ("rust-nu-path" ,rust-nu-path-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
+                       ("rust-nu-cmd-base" ,rust-nu-cmd-base-0.86)
+                       ("rust-nu-color-config" ,rust-nu-color-config-0.86)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-parser" ,rust-nu-parser-0.86)
+                       ("rust-nu-path" ,rust-nu-path-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-once-cell" ,rust-once-cell-1)
+                       ("rust-pathdiff" ,rust-pathdiff-0.2)
                        ("rust-percent-encoding" ,rust-percent-encoding-2)
-                       ("rust-reedline" ,rust-reedline-0.24)
+                       ("rust-reedline" ,rust-reedline-0.25)
                        ("rust-sysinfo" ,rust-sysinfo-0.29)
-                       ("rust-unicode-segmentation" ,rust-unicode-segmentation-1))))
+                       ("rust-unicode-segmentation" ,rust-unicode-segmentation-1)
+                       ("rust-uuid" ,rust-uuid-1))))
     (home-page "https://github.com/nushell/nushell/tree/main/crates/nu-cli")
     (synopsis "CLI-related functionality for Nushell")
     (description "CLI-related functionality for Nushell")
@@ -14327,14 +12867,14 @@ including backreferences and look-around.")
 (define-public rust-thiserror-impl-1
   (package
     (name "rust-thiserror-impl")
-    (version "1.0.49")
+    (version "1.0.50")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "thiserror-impl" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1k643ga9sbqpcb873n299n3zjzc4srfakyv98xwqi4ly0412yw8h"))))
+        (base32 "1f0lmam4765sfnwr4b1n00y14vxh10g0311mkk0adr80pi02wsr6"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -14349,14 +12889,14 @@ including backreferences and look-around.")
 (define-public rust-thiserror-1
   (package
     (name "rust-thiserror")
-    (version "1.0.49")
+    (version "1.0.50")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "thiserror" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1m3yalbcx89bx397igc1ckypw8hiwq9jbzc56pgazrzdsz3fhxqi"))))
+        (base32 "1ll2sfbrxks8jja161zh1pgm3yssr7aawdmaa2xmcwcsbh7j39zr"))))
     (build-system cargo-build-system)
     (arguments
      `(#:skip-build? #t
@@ -14651,48 +13191,51 @@ compiler hackers.")
 terminals.")
     (license license:expat)))
 
-(define-public rust-nu-0.85
+(define-public rust-nu-0.86
   (package
     (name "rust-nu")
-    (version "0.85.0")
+    (version "0.86.0")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "0djbscsp59plmycvzrzqnvp395z6am0a545j7cnqg2gm2g1zs0b4"))))
+        (base32 "1kv18sgvcszwb1prfnp3jsd3rdgbvfmrdbs3yb30pp61rdmnz1lw"))))
     (build-system cargo-build-system)
+    (propagated-inputs (list openssl))
+    (native-inputs (list pkg-config))
     (arguments
-     `(#:cargo-inputs (("rust-crossterm" ,rust-crossterm-0.27)
+     `(#:tests? #f
+       #:cargo-inputs (("rust-crossterm" ,rust-crossterm-0.27)
                        ("rust-ctrlc" ,rust-ctrlc-3)
                        ("rust-log" ,rust-log-0.4)
                        ("rust-miette" ,rust-miette-5)
                        ("rust-mimalloc" ,rust-mimalloc-0.1)
                        ("rust-nix" ,rust-nix-0.27)
                        ("rust-nu-ansi-term" ,rust-nu-ansi-term-0.49)
-                       ("rust-nu-cli" ,rust-nu-cli-0.85)
-                       ("rust-nu-cmd-base" ,rust-nu-cmd-base-0.85)
-                       ("rust-nu-cmd-dataframe" ,rust-nu-cmd-dataframe-0.85)
-                       ("rust-nu-cmd-extra" ,rust-nu-cmd-extra-0.85)
-                       ("rust-nu-cmd-lang" ,rust-nu-cmd-lang-0.85)
-                       ("rust-nu-color-config" ,rust-nu-color-config-0.85)
-                       ("rust-nu-command" ,rust-nu-command-0.85)
-                       ("rust-nu-engine" ,rust-nu-engine-0.85)
-                       ("rust-nu-explore" ,rust-nu-explore-0.85)
-                       ("rust-nu-json" ,rust-nu-json-0.85)
-                       ("rust-nu-parser" ,rust-nu-parser-0.85)
-                       ("rust-nu-path" ,rust-nu-path-0.85)
-                       ("rust-nu-plugin" ,rust-nu-plugin-0.85)
-                       ("rust-nu-pretty-hex" ,rust-nu-pretty-hex-0.85)
-                       ("rust-nu-protocol" ,rust-nu-protocol-0.85)
-                       ("rust-nu-std" ,rust-nu-std-0.85)
-                       ("rust-nu-system" ,rust-nu-system-0.85)
-                       ("rust-nu-table" ,rust-nu-table-0.85)
-                       ("rust-nu-term-grid" ,rust-nu-term-grid-0.85)
-                       ("rust-nu-utils" ,rust-nu-utils-0.85)
+                       ("rust-nu-cli" ,rust-nu-cli-0.86)
+                       ("rust-nu-cmd-base" ,rust-nu-cmd-base-0.86)
+                       ("rust-nu-cmd-dataframe" ,rust-nu-cmd-dataframe-0.86)
+                       ("rust-nu-cmd-extra" ,rust-nu-cmd-extra-0.86)
+                       ("rust-nu-cmd-lang" ,rust-nu-cmd-lang-0.86)
+                       ("rust-nu-color-config" ,rust-nu-color-config-0.86)
+                       ("rust-nu-command" ,rust-nu-command-0.86)
+                       ("rust-nu-engine" ,rust-nu-engine-0.86)
+                       ("rust-nu-explore" ,rust-nu-explore-0.86)
+                       ("rust-nu-json" ,rust-nu-json-0.86)
+                       ("rust-nu-parser" ,rust-nu-parser-0.86)
+                       ("rust-nu-path" ,rust-nu-path-0.86)
+                       ("rust-nu-plugin" ,rust-nu-plugin-0.86)
+                       ("rust-nu-pretty-hex" ,rust-nu-pretty-hex-0.86)
+                       ("rust-nu-protocol" ,rust-nu-protocol-0.86)
+                       ("rust-nu-std" ,rust-nu-std-0.86)
+                       ("rust-nu-system" ,rust-nu-system-0.86)
+                       ("rust-nu-table" ,rust-nu-table-0.86)
+                       ("rust-nu-term-grid" ,rust-nu-term-grid-0.86)
+                       ("rust-nu-utils" ,rust-nu-utils-0.86)
                        ("rust-openssl" ,rust-openssl-0.10)
-                       ("rust-reedline" ,rust-reedline-0.24)
+                       ("rust-reedline" ,rust-reedline-0.25)
                        ("rust-serde-json" ,rust-serde-json-1)
                        ("rust-signal-hook" ,rust-signal-hook-0.3)
                        ("rust-simplelog" ,rust-simplelog-0.12)
@@ -14700,7 +13243,7 @@ terminals.")
                        ("rust-winresource" ,rust-winresource-0.1))
        #:cargo-development-inputs (("rust-assert-cmd" ,rust-assert-cmd-2)
                                    ("rust-criterion" ,rust-criterion-0.5)
-                                   ("rust-nu-test-support" ,rust-nu-test-support-0.85)
+                                   ("rust-nu-test-support" ,rust-nu-test-support-0.86)
                                    ("rust-pretty-assertions" ,rust-pretty-assertions-1)
                                    ("rust-rstest" ,rust-rstest-0.18)
                                    ("rust-serial-test" ,rust-serial-test-2)
@@ -14752,4 +13295,37 @@ terminals.")
     (synopsis "A tiny, robust PRNG implementation.")
     (description "This package provides a tiny, robust PRNG implementation.")
     (license license:expat)))
+
+;; (define-public rust-regex-1
+;;   (package
+;;     (name "rust-regex")
+;;     (version "1.9.1")
+;;     (source
+;;      (origin
+;;        (method url-fetch)
+;;        (uri (crate-uri "regex" version))
+;;        (file-name (string-append name "-" version ".tar.gz"))
+;;        (sha256
+;;         (base32 "0xdmrvs8fy7yw2bdk76mjbhzqibms7g4ljg468jwzxr0qa7ydsmj"))))
+;;     (build-system cargo-build-system)
+;;     (arguments
+;;      `(#:cargo-inputs (("rust-aho-corasick" ,rust-aho-corasick-1)
+;;                        ("rust-memchr" ,rust-memchr-2)
+;;                        ("rust-regex-automata" ,rust-regex-automata-0.3)
+;;                        ("rust-regex-syntax" ,rust-regex-syntax-0.7))
+;;        #:cargo-development-inputs (("rust-anyhow" ,rust-anyhow-1)
+;;                                    ("rust-doc-comment" ,rust-doc-comment-0.3)
+;;                                    ("rust-env-logger" ,rust-env-logger-0.9)
+;;                                    ("rust-once-cell" ,rust-once-cell-1)
+;;                                    ("rust-quickcheck" ,rust-quickcheck-1)
+;;                                    ("rust-regex-test" ,rust-regex-test-0.1))))
+;;     (home-page "https://github.com/rust-lang/regex")
+;;     (synopsis
+;;      "An implementation of regular expressions for Rust. This implementation uses
+;; finite automata and guarantees linear time matching on all inputs.
+;; ")
+;;     (description
+;;      "An implementation of regular expressions for Rust.  This implementation uses
+;; finite automata and guarantees linear time matching on all inputs.")
+;;     (license (list license:expat license:asl2.0))))
 
