@@ -46,3 +46,22 @@
    (synopsis "Emacs japanese Holiday list")
    (description "japanese Holiday set")
    (license license:gpl2+)))
+
+(define-public emacs-teco
+  (package
+   (name "emacs-teco")
+   (version "master")
+   (source
+    (origin
+     (method git-fetch)
+     (uri
+      (git-reference
+       (url "https://github.com/mtk/teco")
+       (commit version)))
+     (sha256
+      (base32 "0jfrlpmcr8msj39fhm0sc11sxw46w0dk24zidsdp12lwgcnli44m"))))
+   (build-system emacs-build-system)
+   (home-page "https://github.com/mtk/teco")
+   (synopsis "TECO was an ancient text editor written in the days before most of you reading this were born. It supported macros of editing commands as an extension mechanism. The original version of EMACS was written by loading macros into TECO that provided EMACS functionality and then saving the memory image of the combined TECO command interpreter and the macros as a new program (\"dumping an EMACS\").")
+   (description "TECO was an ancient text editor written in the days before most of you reading this were born. It supported macros of editing commands as an extension mechanism. The original version of EMACS was written by loading macros into TECO that provided EMACS functionality and then saving the memory image of the combined TECO command interpreter and the macros as a new program (\"dumping an EMACS\").")
+   (license license:gpl3+)))
