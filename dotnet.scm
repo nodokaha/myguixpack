@@ -67,20 +67,20 @@ various IDEs and plugins.")
     (license license:expat)))
 
 (define-public dotnet
-  (let ((dotnet-sdk-version "8.0.0-rc.2.23479.6"))
+  (let ((dotnet-sdk-version "8.0.0"))
     (package
       (name "dotnet")
-      (version "8.0.100-rc.2.23502.2")
+      (version "8.0.100")
       (source
        (origin
          (method url-fetch/tarbomb)
          (uri
-          (string-append "https://download.visualstudio.microsoft.com/download/pr/1975ec3e-0be7-460a-af09-2765318cab53/a07859c84a3e8990ccc77fb7efa53b28/dotnet-sdk-"
+          (string-append "https://download.visualstudio.microsoft.com/download/pr/5226a5fa-8c0b-474f-b79a-8984ad7c5beb/3113ccbf789c9fd29972835f0f334b7a/dotnet-sdk-"
                          version
                          "-linux-x64.tar.gz"))
          (sha256
           (base32
-           "1zfsailkg98jw4pk4mx2y2qmyhmvkgfv799is1wk0hbn310js2fa"))))
+           "04b2yfcqn9z8zjdrx9fgqdh2nnhwn0dy72rbha99drik6ap941jm"))))
       (build-system binary-build-system)
       (arguments
        `(#:patchelf-plan
