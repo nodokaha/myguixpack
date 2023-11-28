@@ -13194,14 +13194,14 @@ terminals.")
 (define-public rust-nu-0.86
   (package
     (name "rust-nu")
-    (version "0.86.0")
+    (version "0.87.1")
     (source
      (origin
        (method url-fetch)
        (uri (crate-uri "nu" version))
        (file-name (string-append name "-" version ".tar.gz"))
        (sha256
-        (base32 "1kv18sgvcszwb1prfnp3jsd3rdgbvfmrdbs3yb30pp61rdmnz1lw"))))
+        (base32 "1ci4yaqqhb6agz37fnf7krmpnxpn1g29bnnf863s3w79mvhqaqsa"))))
     (build-system cargo-build-system)
     (propagated-inputs (list openssl))
     (native-inputs (list pkg-config))

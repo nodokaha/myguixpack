@@ -309,7 +309,7 @@ produce your expressions in software.")
 (define-public iaito
   (package
     (name "iaito")
-    (version "master")
+    (version "5.8.8")
     (source
      (origin
        (method git-fetch)
@@ -317,7 +317,7 @@ produce your expressions in software.")
              (url "https://github.com/radareorg/iaito")
              (commit version)))
        (sha256
-        (base32 "0y37lli4zpxz9w5xd2nk10m5fhb0a7v9hq0my9i9xz17p9vsk87w"))))
+        (base32 "1w0mxx1akiwfk1k6cv5bq3bspbfhhdh8nff8g9nij3r9ljkxvigy"))))
     (build-system gnu-build-system)
     (arguments `(#:tests? #f))
     ;; (arguments `(#:configure-flags '("CC=clang" "CXX=clang++")))

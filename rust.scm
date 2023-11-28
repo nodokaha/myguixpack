@@ -21,7 +21,7 @@
 ;;;
 ;;; GNU Guix is free software; you can redistribute it and/or modify it
 ;;; under the terms of the GNU General Public License as published by
-;;; the Free Software Foundation; either version 3 of the License, or (at
+;;; the Free Software Foundation; either verion 3 of the License, or (at
 ;;; your option) any later version.
 ;;;
 ;;; GNU Guix is distributed in the hope that it will be useful, but
@@ -723,7 +723,7 @@ safety and thread safety guarantees.")
 
 (define rust-1.71
   (rust-bootstrapped-package
-   rust-1.70 "1.71.0" "18g3bd5hn43f3jq18i7h4abvb5h51sgzcmhid3mbcxhxnnxn37ga"))
+   rust-1.70 "1.71.0" "15jc0d13cmrh2xvpkyyvsbwgn3w4klqiwf2wlgzfp22mvjmy8rx6"))
 
 (define rust-1.72
   (rust-bootstrapped-package

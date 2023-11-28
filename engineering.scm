@@ -2642,7 +2642,7 @@ simulation.")
   (package
     (inherit radare2)
     (name "radare2")
-    (version "5.0.0")
+    (version "5.8.8")
     (source (origin
               (method git-fetch)
               (uri (git-reference
@@ -2650,13 +2650,13 @@ simulation.")
                     (commit version)))
               (sha256
                (base32
-                "0aa7c27kd0l55fy5qfvxqmakp4pz6240v3hn84095qmqkzcbs420"))
+                "184qvz3hyzww1lvj02yjnc075xndx8q8y3lqv473gbmj2kkmaqr4"))
               (file-name (git-file-name name version))))))
 
 (define-public cutter
   (package
     (name "cutter")
-    (version "1.12.0")
+    (version "2.3.2")
     (source
      (origin
        (method git-fetch)
@@ -2665,7 +2665,7 @@ simulation.")
              (commit (string-append "v" version))))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "0ljj3j3apbbw628n2nyrxpbnclixx20bqjxm0xwggqzz9vywsar0"))))
+        (base32 "1xl5zmnfzs82l62c059a5czskvbjf358zr51ypxlz46q1sdabjvn"))))
     (build-system gnu-build-system)
     (arguments
      `(#:phases
@@ -3939,7 +3939,7 @@ BOM creation and has a lot of extra features.")
 (define-public libarcus
   (package
     (name "libarcus")
-    (version "4.13.0") ; Should same version as Cura package.
+    (version "2015.15.04") ; Should same version as Cura package.
     (source
      (origin
        (method git-fetch)
@@ -3948,7 +3948,7 @@ BOM creation and has a lot of extra features.")
              (commit version)))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "19fi0y0lk45cyampczgh3kz2swai4zcgzkffp0xf5h55rxxrdpvk"))))
+        (base32 "1kcykclp4gp11pmh2r5nwydzdf8msb8s3nb5m6h9rn5kbfg4bg2j"))))
     (build-system cmake-build-system)
     (inputs
      (list protobuf
@@ -3985,7 +3985,7 @@ facilitate the communication between Cura and its backend and similar code.")
 (define-public cura-engine
   (package
     (name "cura-engine")
-    (version "4.13.1")
+    (version "15.06.03")
     (source
      (origin
        (method git-fetch)
@@ -3994,7 +3994,7 @@ facilitate the communication between Cura and its backend and similar code.")
                (commit version)))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "0xp2r0m5wwfsh9wdb3biqzvfqfz5jsmyw4bww93aksw0rgli07bp"))))
+        (base32 "1jr7gri3rmk3xdcqhs7nwhh8r0vynjbcvjkc9pnhfd1qwidkpy4c"))))
     (build-system cmake-build-system)
     (native-inputs
      (list googletest pkg-config))
@@ -4027,7 +4027,7 @@ larger project called Cura.")
 (define-public cura-binary-data
   (package
     (name "cura-binary-data")
-    (version "4.13.1")
+    (version "5.5.0")
     (source
      (origin
        (method git-fetch)
@@ -4036,7 +4036,7 @@ larger project called Cura.")
                (commit version)))
          (file-name (git-file-name name version))
          (sha256
-          (base32 "11dra399adky7jxpaqqk1swrg5y3cc1086l54c3injg3ccgrvwik"))
+          (base32 "121w0pkh8548w3nmi4baj7d4l2xgqdz2l4z8biky5r7hjcfhrxdx"))
          (modules '((guix build utils)))
          (snippet
           '(begin
@@ -4056,7 +4056,7 @@ compiled translations.  Prebuilt Firmware files are removed.")
 (define-public uranium
   (package
     (name "uranium")
-    (version "4.13.1")
+    (version "5.5.0")
     (source
      (origin
        (method git-fetch)
@@ -4065,7 +4065,7 @@ compiled translations.  Prebuilt Firmware files are removed.")
                (commit version)))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "1nyxm3fdyrsisqkxbqld66bljd852wnc1yc6i1lyvncwvzn8ai32"))))
+        (base32 "01zaxdapzzcs0c7l9fd5qzz300f2f15r2ig3sb85jvp11clb3zsi"))))
     (build-system cmake-build-system)
     (native-inputs
      (list doxygen
@@ -4123,7 +4123,7 @@ from Ultimaker.")
   ;; Cura uses a custom fork of the libnest2d library.
   (package
     (name "libnest2d-for-cura")
-    (version "4.12.0")
+    (version "5.3.0")
     (source
      (origin
        (method git-fetch)
@@ -4132,7 +4132,7 @@ from Ultimaker.")
              (commit version)))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "1wk7cv8sqnxy7srq61scrr18dz2i0l4s4slmjfh4890iy0wf9i7n"))))
+        (base32 "1bh0fpki9rbi9kwh4ffvmfs8a38xfh1sxixbf8pc9j4symldjyqz"))))
     (build-system cmake-build-system)
     (inputs
      (list boost clipper nlopt))
@@ -4153,7 +4153,7 @@ problem.  It was inspired from the SVGNest Javascript library.")
 (define-public python-pynest2d
   (package
     (name "python-pynest2d")
-    (version "4.12.0")
+    (version "5.3.0")
     (source
      (origin
        (method git-fetch)
@@ -4162,7 +4162,7 @@ problem.  It was inspired from the SVGNest Javascript library.")
              (commit version)))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "0jhqfylg6vzlbz9rqs981bg6y8s18iklw1p8hmax72xq2c7561s1"))))
+        (base32 "047bvsy370pdnq3wsqczihj22basrd9fbqk7w0qsafgadg6hbd17"))))
     (build-system cmake-build-system)
     (native-inputs
      (list pkg-config))
@@ -4201,7 +4201,7 @@ problem.  It was inspired from the SVGNest Javascript library.")
 (define-public libcharon
   (package
     (name "libcharon")
-    (version "4.13.0")
+    (version "2020.03.06")
     (source
      (origin
        (method git-fetch)
@@ -4210,7 +4210,7 @@ problem.  It was inspired from the SVGNest Javascript library.")
                (commit version)))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "0ibv15y7lfxs09k6rbc3kiaz13gq3v9vqxrk20rqp6bdclk3izff"))))
+        (base32 "1r6sis6cfk81qphs9dfp3444bcy69yhlv9mvy4ksh1r7ik3c9sjp"))))
     (build-system cmake-build-system)
     (native-inputs
      (list python-pytest))
@@ -4225,7 +4225,7 @@ belongs to the Cura project from Ultimaker.")
 (define-public libsavitar
   (package
     (name "libsavitar")
-    (version "4.13.0")
+    (version "5.3.0")
     (source
      (origin
        (method git-fetch)
@@ -4234,7 +4234,7 @@ belongs to the Cura project from Ultimaker.")
              (commit version)))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "1cq85x0xizsjwf9nl7v7x4i9vl335mgv2lda3q2c9fcwrndsc3wk"))))
+        (base32 "0v5gvcqxlmn79r82ibs7wsn1bchdfwfvz6vvh72gklv80d0w2p46"))))
     (build-system cmake-build-system)
     (inputs
      (list python python-sip-4))
@@ -4263,7 +4263,7 @@ python bindings.  It belongs to the Cura project from Ultimaker.")
 (define-public cura
   (package
     (name "cura")
-    (version "4.13.1")
+    (version "21.04")
     (source
      (origin
        (method git-fetch)
@@ -4272,7 +4272,7 @@ python bindings.  It belongs to the Cura project from Ultimaker.")
              (commit version)))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "0yg17pcrj5gm02aqcjfk40ynvpb9r9aaq9rj108dkpki1is15ks7"))))
+        (base32 "14s6ga076nda0xl632ac0v96085fl193xiyz97szidj2wcfqpn2z"))))
     (build-system qt-build-system)
     (native-inputs
      (list python-certifi

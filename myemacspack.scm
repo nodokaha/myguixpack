@@ -26,6 +26,7 @@
   #:use-module (guix utils)
   #:use-module (guix build utils)
   #:use-module ((guix licenses) #:prefix license:)
+  #:use-module ((nonguix licenses) #:prefix plicense:)
   #:use-module (guix build-system emacs))
 
 (define-public emacs-japanese-holiday
@@ -65,3 +66,22 @@
    (synopsis "TECO was an ancient text editor written in the days before most of you reading this were born. It supported macros of editing commands as an extension mechanism. The original version of EMACS was written by loading macros into TECO that provided EMACS functionality and then saving the memory image of the combined TECO command interpreter and the macros as a new program (\"dumping an EMACS\").")
    (description "TECO was an ancient text editor written in the days before most of you reading this were born. It supported macros of editing commands as an extension mechanism. The original version of EMACS was written by loading macros into TECO that provided EMACS functionality and then saving the memory image of the combined TECO command interpreter and the macros as a new program (\"dumping an EMACS\").")
    (license license:gpl3+)))
+
+(define-public emacs-doom-modeline-exwm
+  (package
+   (name "emacs-doom-modeline-exwm")
+   (version "master")
+   (source
+    (origin
+     (method git-fetch)
+     (uri
+      (git-reference
+       (url "https://github.com/elken/doom-modeline-exwm")
+       (commit version)))
+     (sha256
+      (base32 "0r8i6lb34yy4n3yy7c7h6f5hvyws2xihh2gh65mg9x6nz3w7kvay"))))
+   (build-system emacs-build-system)
+   (home-page "https://github.com/elken/doom-modeline-exwm")
+   (synopsis "doom-modeline segment for exwm")
+   (description "doom-modeline segment for exwm")
+   (license license:expat)))

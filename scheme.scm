@@ -1118,7 +1118,7 @@ a Common Lisp environment.")
 (define-public gerbil
   (package
     (name "gerbil")
-    (version "0.17.0")
+    (version "0.18")
     (source (origin
               (method git-fetch)
               (uri (git-reference
@@ -1127,7 +1127,7 @@ a Common Lisp environment.")
               (file-name (git-file-name name version))
               (sha256
                (base32
-                "0c0nspm659ybgmqlppdv7sxzll4hwkvcp9qmcsip6d0kz0p8r9c3"))))
+                "0bkwk0cb837s420zazwpqp02mdf29spf539f2jz0yk61j5z5aa62"))))
     (arguments
      (list #:phases
            #~(modify-phases %standard-phases
@@ -1281,7 +1281,7 @@ application.")
 (define-public otus-lisp
   (package
     (name "otus-lisp")
-    (version "2.4")
+    (version "2.5")
     (source
      (origin
        (method git-fetch)
@@ -1289,14 +1289,14 @@ application.")
              (url "https://github.com/yuriy-chumak/ol/")
              (commit version)))
        (sha256
-        (base32 "0fyxvip4nmih866s7x4v52226crjda7pw3mmva34nckg33a8gapv"))))
+        (base32 "1szs8lhqgs6ac04slsasclln3mhjv9dd02cy60xwmpbhzdrgc2f7"))))
     (build-system gnu-build-system)
     (arguments
 	`(#:tests? #f
        #:make-flags (list "CC=gcc" (string-append "PREFIX=" %output))
        #:phases (modify-phases %standard-phases
                   (delete 'configure))))
-    (native-inputs (list gcc xxd))
+    (native-inputs (list gcc-13 xxd))
     (synopsis
      "Otus Lisp (**Ol** in short) is a purely functional dialect of Lisp.")
     (description

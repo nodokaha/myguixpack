@@ -89,7 +89,7 @@ client.")
 (define-public fcitx5
   (package
     (name "fcitx5")
-    (version "5.1.0")
+    (version "5.1.5")
     (source
      (origin
        (method url-fetch)
@@ -97,7 +97,7 @@ client.")
              "https://download.fcitx-im.org/fcitx5/fcitx5/fcitx5-"
              version "_dict.tar.xz"))
        (sha256
-        (base32 "1a1d3bcxddv3hsmffgf608arhamia17bq82q932sy5zl9j8s423y"))))
+        (base32 "108a8561wh01vl5gqp2rnmnrh9qq3v8md3410dw46lx705a1wy4r"))))
     (arguments
      (list #:configure-flags #~(list "-DUSE_SYSTEMD=OFF")))
     (build-system cmake-build-system)
@@ -306,7 +306,7 @@ IM module for GTK+3 applications.
 (define-public fcitx5-qt
   (package
     (name "fcitx5-qt")
-    (version "5.1.0")
+    (version "5.1.3")
     (source
      (origin
        (method url-fetch)
@@ -314,7 +314,7 @@ IM module for GTK+3 applications.
                            "/fcitx5-qt/fcitx5-qt-"
                            version ".tar.xz"))
        (sha256
-        (base32 "02gnzwf0mlshmh1hw8c1866643qmdqazwjz339jq0c3ll61f8m7h"))))
+        (base32 "0wyzq91fcqhv655fjhzfjmlj0xr365sl5cjgck75xaj08gj3mw61"))))
     (build-system cmake-build-system)
     (arguments
      `(#:configure-flags
