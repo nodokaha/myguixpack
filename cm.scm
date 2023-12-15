@@ -38,14 +38,17 @@
        (sha256
 	(base32 "0dhkn6nl31fdaf68w7yclgpa0xvlmicjxqd385zpzzl2cpxw7631"))))
     (build-system gnu-build-system)
-    (native-inputs (list premake4 pkg-config unzip gcc-toolchain-5 config))
+    (native-inputs (list premake4 pkg-config unzip gcc-toolchain-5 bash))
     (inputs (list alsa-lib libxext libxt freetype libxinerama libsamplerate gtk+ snd curl glu))
     (arguments (list #:tests? #f
+		     #:parallel-build? #f
 		     #:phases #~(modify-phases %standard-phases
-					       ;; (with-directory-excursion "sndlib" configure)
+;					       (with-directory-excursion "sndlib" configure)
+					       (add-before 'patch-source-shebangs 'sh-to-bash
+					       		(lambda* (#:key inputs outputs #:allow-other-keys) (invoke "sed" "-e" (string-append "s#/bin/sh#" #$bash "/bin/bash#g") "-i" "sndlib/configure")))
 					       (replace 'configure 
 							(lambda* (#:key build inputs outputs #:allow-other-keys)
-							  (copy-recursively (string-append #$config "/bin/") "./sndlib")
+;							  (copy-recursively (string-append #$config "/bin/") "./sndlib")
 							  (with-directory-excursion
 							   "sndlib"
 							   (invoke "./configure"
@@ -57,8 +60,62 @@
 							     (invoke "premake4")
 							     ;; (invoke "sed" "-e" "s/premake/premake4/g" "-i" "./sndlib/config.sub")
 							     
-							     ;; (invoke "sed" "-e" "s/-lsndlib/-lsnd/g" "-i" "Grace.make")
-							     )))))
+							     (invoke "sed" "-e" "s/-lsndlib/sndlib\\/libsndlib.a/g" "-i" "Grace.make")
+							     ))
+					       (replace 'install
+							(lambda* (#:key outputs #:allow-other-keys)
+							  (let ((out (assoc-ref outputs "out")))
+							    (mkdir-p (string-append out "/usr/bin"))
+							    (install-file "bin/Grace" (string-append out "/bin"))))))))
+    (synopsis "Graphical Realtime Algorithmic Composition Environment")
+    (description "Grace (Graphical Realtime Algorithmic Composition Environment) 
+   A drag-and-drop GUI with embedded Scheme interpreter (Sndlib/S7),
+   code editor, data plotter and realtime connections to various
+   packages such as MIDI, OSC, CLM, Csound, Fomus and SDIF.")
+    (home-page "https://sourceforge.net/projects/commonmusic/")
+    (license license:gpl2)))
+
+(define-public grace-3.9.0
+  (package
+    (name "grace")
+    (version "3.9.0")
+    (source
+     (origin
+       (method url-fetch)
+	 (uri
+	  (string-append "https://downloads.sourceforge.net/project/commonmusic/cm/" version "/cm-" version ".zip"))
+       (sha256
+	(base32 "02p8ja16g0wg15l9p4ivk4w57rc5z9s9iz1lbiq62m7y93v7n1cb"))))
+    (build-system gnu-build-system)
+    (native-inputs (list premake4 pkg-config unzip gcc-toolchain-5 bash))
+    (inputs (list alsa-lib libxext libxt freetype libxinerama libsamplerate gtk+ snd curl glu))
+    (arguments (list #:tests? #f
+		     #:parallel-build? #f
+		     #:phases #~(modify-phases %standard-phases
+;					       (with-directory-excursion "sndlib" configure)
+					       (add-before 'patch-source-shebangs 'sh-to-bash
+					       		(lambda* (#:key inputs outputs #:allow-other-keys) (invoke "sed" "-e" (string-append "s#/bin/sh#" #$bash "/bin/bash#g") "-i" "sndlib/configure")))
+					       (replace 'configure 
+							(lambda* (#:key build inputs outputs #:allow-other-keys)
+;							  (copy-recursively (string-append #$config "/bin/") "./sndlib")
+							  (with-directory-excursion
+							   "sndlib"
+							   (invoke "./configure"
+								   (string-append "--prefix=" (assoc-ref outputs "out"))
+								   (string-append "--build=" build)))))
+					       (add-before 'build 'premake
+							   (lambda* (#:key inputs outputs #:allow-other-keys)
+					;						     (copy-recursively #$JUCE "juce")
+							     (invoke "premake4")
+							     ;; (invoke "sed" "-e" "s/premake/premake4/g" "-i" "./sndlib/config.sub")
+							     
+							     (invoke "sed" "-e" "s/-lsndlib/sndlib\\/libsndlib.a/g" "-i" "Grace.make")
+							     ))
+					       (replace 'install
+							(lambda* (#:key outputs #:allow-other-keys)
+							  (let ((out (assoc-ref outputs "out")))
+							    (mkdir-p (string-append out "/usr/bin"))
+							    (install-file "bin/Grace" (string-append out "/bin"))))))))
     (synopsis "Graphical Realtime Algorithmic Composition Environment")
     (description "Grace (Graphical Realtime Algorithmic Composition Environment) 
    A drag-and-drop GUI with embedded Scheme interpreter (Sndlib/S7),
