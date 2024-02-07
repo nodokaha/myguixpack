@@ -322,7 +322,7 @@ produce your expressions in software.")
     (arguments `(#:tests? #f))
     ;; (arguments `(#:configure-flags '("CC=clang" "CXX=clang++")))
     (propagated-inputs (list qtbase qtsvg radare2 openssl))
-    (native-inputs (list pkg-config autoconf automake m4 qttools clang))
+    (native-inputs (list pkg-config autoconf automake m4 qttools))
     (home-page "https://github.com/radareorg/iaito")
     (synopsis "iaito is the official graphical interface for radare2, a libre reverse engineering framework.")
     (description

@@ -79,6 +79,7 @@
   #:use-module (gnu packages lisp-check)
   #:use-module (gnu packages lisp-xyz)
   #:use-module (gnu packages m4)
+  #:use-module (gnu packages c)
   #:use-module (gnu packages multiprecision)
   #:use-module (gnu packages ncurses)
   #:use-module (gnu packages netpbm)
@@ -1303,3 +1304,34 @@ application.")
      "It implements an extended subset of the R7RS Scheme, including but not limited to some SRFIs. It's tiny (~ 64KB), embeddable, and cross-platform;  provides a portable, high-level interface to call code written in another language (c, python, lua, etc).")
     (home-page "https://yuriy-chumak.github.io/ol/")
     (license (list gpl3+ lgpl3+ expat))))
+
+(define-public cyclone-scheme
+  (package
+    (name "cyclone-scheme")
+    (version "0.35.0")
+    (source
+     (origin
+       (method git-fetch)
+       (uri (git-reference
+             (url "https://github.com/justinethier/cyclone-bootstrap/")
+             (commit "master")))
+       (sha256
+        (base32 "14j764fpq8s3bfhraik3fq3f9mn0z6j17wpndw3wspgmph51h5xh"))))
+    (build-system gnu-build-system)
+    (arguments
+	`(#:tests? #f
+       #:make-flags (list "CC=gcc" (string-append "PREFIX=" %output))
+       #:phases (modify-phases %standard-phases
+                  (delete 'configure))))
+    (inputs (list ck))
+    (native-inputs (list gcc-13 glibc))
+    (synopsis
+     "Cyclone Scheme is a brand-new, R7RS Scheme-to-C compiler that uses a variant of
+Cheney on the MTA to implement full tail recursion, continuations, and
+generational garbage collection.")
+    (description
+     "Cyclone Scheme is a brand-new, R7RS Scheme-to-C compiler that uses a variant of
+Cheney on the MTA to implement full tail recursion, continuations, and
+generational garbage collection.")
+    (home-page "https://justinethier.github.io/cyclone/")
+    (license (list expat))))
