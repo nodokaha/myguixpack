@@ -97,7 +97,7 @@
   #:use-module (gnu packages file)
   #:use-module (gnu packages flex)
   #:use-module (gnu packages fontutils)
-  #:use-module (gnu packages fpga)
+  #:use-module (gnu packages electronics)
   #:use-module (gnu packages freedesktop)
   #:use-module (gnu packages gawk)
   #:use-module (gnu packages gcc)
