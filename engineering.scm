@@ -149,6 +149,7 @@
   #:use-module (gnu packages qt)
   #:use-module (gnu packages readline)
   #:use-module (gnu packages ruby)
+  #:use-module (gnu packages ruby-xyz)
   #:use-module (gnu packages serialization)
   #:use-module (gnu packages sqlite)
   #:use-module (gnu packages stb)
@@ -1476,8 +1477,7 @@ use on a given system.")
            parallel
            perl
            pkg-config
-           python-wrapper
-           python-libxml2))
+           python-wrapper))
     (inputs
      (list pcre2))
     (home-page "https://www.gnu.org/software/libredwg/")
@@ -2292,7 +2292,7 @@ unique design feature of Trilinos is its focus on packages.")
         (string-append "ARCHDIR="
                        (assoc-ref %build-inputs "trilinos")))))
     (native-inputs
-     `(("bison" ,bison-3.0)                  ;'configure' fails with Bison 3.4
+     `(("bison" ,bison)                  ;'configure' fails with Bison 3.4
        ("flex" ,flex)
        ("fortran" ,gfortran)))
     (inputs
@@ -2464,8 +2464,7 @@ parallel computing platforms.  It also supports serial execution.")
         ;; Delete libraries that we already have or don't need.
         ;; TODO: try to unbundle more (see lib/).
         `(begin
-           (let ((third-parties '("fontobene-qt5"
-                                  "googletest"
+           (let ((third-parties '("googletest"
                                   "hoedown"
                                   "muparser"
                                   "polyclipping"
@@ -2480,7 +2479,6 @@ parallel computing platforms.  It also supports serial execution.")
     (inputs
      (list clipper
            fontconfig
-           fontobene-qt5
            glu
            hoedown
            muparser
@@ -2786,7 +2784,7 @@ specification can be downloaded at @url{http://3mf.io/specification/}.")
                               (("from .thirdparty import prettytable")
                                "import prettytable")))))))
     (native-inputs (list python-pytest))
-    (propagated-inputs (list python-dataclasses python-prettytable
+    (propagated-inputs (list python-prettytable
                              python-typing-extensions))
     (home-page "https://pyvisa.readthedocs.io/en/latest/")
     (synopsis "Python binding for the VISA library")
@@ -2939,108 +2937,6 @@ full programmatic control over your models.")
     (description "@code{scad-mode} provides an Emacs major mode for editing
 OpenSCAD code.  It supports syntax highlighting, indenting and refilling of
 comments.")))
-
-(define-public freecad
-  (package
-    (name "freecad")
-    (version "0.21.1")
-    (source
-     (origin
-       (method git-fetch)
-       (uri (git-reference
-             (url "https://github.com/FreeCAD/FreeCAD")
-             (commit version)))
-       (file-name (git-file-name name version))
-       (sha256
-        (base32 "0qwh6b1s432j5piwgfkphvz0slmxf0m8m8pdr3ny9zna9mghz42k"))))
-    (build-system qt-build-system)
-    (native-inputs
-     (list doxygen
-           graphviz
-           qttools-5
-           pkg-config
-           python-pyside-2-tools
-           swig))
-    (inputs
-     (list boost
-           coin3D
-           double-conversion
-           eigen
-           fmt
-           fontconfig
-           freetype
-           gl2ps
-           glew
-           hdf5-1.10
-           jsoncpp
-           libarea
-           libjpeg-turbo
-           libmedfile
-           libspnav
-           libtheora
-           libtiff
-           libxi
-           libxml++
-           libxmu
-           lz4
-           netcdf
-           opencascade-occt
-           openmpi
-           proj
-           python-gitpython
-           python-matplotlib
-           python-pivy
-           python-ply
-           python-pyside-2
-           python-pyyaml
-           python-shiboken-2
-           python-wrapper
-           qtbase-5
-           qtdeclarative-5
-           qtsvg-5
-           qtwebchannel-5
-           qtwebengine-5
-           qtx11extras
-           qtxmlpatterns
-           sqlite
-           tbb-2020                     ; Same version as opencascade-occt
-           vtk
-           xerces-c
-           zlib))
-    (arguments
-     `(#:tests? #f                      ; Project has no tests
-       #:configure-flags
-       ,#~(list
-           "-DBUILD_QT5=ON"
-           "-DBUILD_FLAT_MESH:BOOL=ON"
-           "-DBUILD_ENABLE_CXX_STD:STRING=C++17"
-           (string-append "-DCMAKE_INSTALL_LIBDIR=" #$output "/lib"))
-       #:phases
-       (modify-phases %standard-phases
-         (add-before 'configure 'restore-pythonpath
-           (lambda _
-             (substitute* "src/Main/MainGui.cpp"
-               (("_?putenv\\(\"PYTHONPATH=\"\\);") ""))))
-         (add-after 'install 'wrap-pythonpath
-           (lambda* (#:key outputs #:allow-other-keys)
-             (let ((out (assoc-ref outputs "out")))
-               (wrap-program (string-append out "/bin/FreeCAD")
-                 (list "GUIX_PYTHONPATH"
-                       'prefix (list (getenv "GUIX_PYTHONPATH"))))))))))
-    (home-page "https://www.freecadweb.org/")
-    (synopsis "Your Own 3D Parametric Modeler")
-    (description
-     "FreeCAD is a general-purpose, feature-based, parametric 3D modeler for
-CAD, MCAD, CAx, CAE, and PLM.  It is aimed directly at mechanical engineering
-and product design but also fits a wider range of uses in engineering, such as
-architecture or other engineering specialties.  It is modular, allowing for
-extension and customization.")
-    (license
-     (list
-      license:lgpl2.1+
-      license:lgpl2.0+
-      license:gpl3+
-      license:bsd-3))))
 
 (define-public libmedfile
   (package
@@ -4510,7 +4406,7 @@ more.")
                 "0bazk3k2dyzlrh7yxs4pc76m5ysm7riia3ncg7as3xr4y9dy29bx"))))
     (build-system pyproject-build-system)
     (native-inputs
-     (list python-pytest-asyncio python-pytest-runner python-asynctest
+     (list python-pytest-asyncio
            python-pytest-mock))
     (propagated-inputs
      (list python-aiofiles python-aiosqlite python-cryptography

@@ -200,7 +200,9 @@
   #:use-module (gnu packages networking)
   #:use-module (gnu packages python)
   #:use-module (gnu packages python-xyz)
+  #:use-module (gnu packages python-check)
   #:use-module (gnu packages telephony)
+  #:use-module (gnu packages telegram)
   #:use-module (gnu packages terminals)
   #:use-module (gnu packages tex)
   #:use-module (gnu packages texinfo)
@@ -240,6 +242,7 @@
   #:use-module (gnu packages pdf)
   #:use-module (gnu packages racket)
   #:use-module (gnu packages ruby)
+  #:use-module (gnu packages ruby-check)
   #:use-module (gnu packages rust-apps)
   #:use-module (gnu packages scheme)
   #:use-module (gnu packages serialization)
@@ -21306,30 +21309,6 @@ lines of code.  Polymode also provides extensible facilities for external
 literate programming tools for exporting, weaving and tangling.")
     (license license:gpl3+)))
 
-(define-public emacs-polymode-ansible
-  (package
-    (name "emacs-polymode-ansible")
-    (version "0.3.0")
-    (source
-     (origin
-       (method git-fetch)
-       (uri (git-reference
-             (url "https://gitlab.com/mavit/poly-ansible")
-             (commit version)))
-       (file-name (git-file-name name version))
-       (sha256
-        (base32 "0f0yq6gmkp194nxk90ipprglf1xkmxrgz1rkgrhfslvxq4q2l81h"))))
-    (build-system emacs-build-system)
-    (propagated-inputs
-     (list emacs-ansible-doc emacs-jinja2-mode emacs-polymode
-           emacs-yaml-mode))
-    (properties '((upstream-name . "poly-ansible")))
-    (home-page "https://gitlab.com/mavit/poly-ansible/")
-    (synopsis "Polymode for Ansible - Jinja2 in YAML")
-    (description
-     "Edit YAML files for Ansible containing embedded Jinja2 templating.")
-    (license license:gpl3+)))
-
 (define-public emacs-polymode-markdown
   (package
     (name "emacs-polymode-markdown")
@@ -29262,37 +29241,6 @@ chevron marks.")
 Nix expressions.  It supports syntax highlighting, indenting and refilling of
 comments.")
     (license license:lgpl2.1+)))
-
-(define-public emacs-nyxt
-  (package
-    (name "emacs-nyxt")
-    (version "0.1.0")
-    (source (origin
-              (method git-fetch)
-              (uri (git-reference
-                    (url "https://git.sr.ht/~conses/nyxt.el")
-                    (commit version)))
-              (file-name (git-file-name name version))
-              (sha256
-               (base32
-                "1hgb10pk5m3v2gsl4h6i821nyzksss0rk4hhjnfb7nm98lalzbl6"))))
-    (build-system emacs-build-system)
-    (arguments
-     (list
-      #:phases
-      #~(modify-phases %standard-phases
-          (add-after 'unpack 'patch-file-name
-            (lambda* (#:key inputs #:allow-other-keys)
-              (emacs-substitute-variables "nyxt.el"
-                ("nyxt-path"
-                 (search-input-file inputs "/bin/nyxt"))))))))
-    (inputs (list nyxt))
-    (propagated-inputs (list emacs-sly))
-    (home-page "https://git.sr.ht/~conses/nyxt.el")
-    (synopsis "Interact with Nyxt from Emacs")
-    (description "This package consists of custom logic to interact with Nyxt
-from Emacs.")
-    (license license:gpl3+)))
 
 (define-public emacs-libmpdel
   (package

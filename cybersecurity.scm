@@ -219,7 +219,6 @@ computing library")
            python-mako
            python-packaging
            python-paramiko
-           python-pathlib2
            python-pip
            python-psutil
            python-pyelftools
