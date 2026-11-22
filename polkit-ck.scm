@@ -2,10 +2,12 @@
 ;;;
 ;;; myguixpack チャンネル用のモジュール。Guix 本体には無い ConsoleKit2 と、
 ;;; session_tracking=ConsoleKit でビルドした polkit の変種 (polkit/ck) を
-;;; 定義する。背景と OS 設定への組み込み方は同梱の README.md を参照。
+;;; 定義する。elogind を消した seatd 運用では polkit のセッション照合が
+;;; "No session for cookie" で落ちるため、台帳係だけを ConsoleKit2 に
+;;; 任せる構成。
 ;;;
-;;; 注意: 叩き台。Muse の VM には Guix が無いため未検証。
-;;; ビルド確認は laptop 側で行うこと (手順は README.md)。
+;;; 注意: 叩き台 (未検証)。consolekit2 の sha256 はプレースホルダで、
+;;; 採用時に guix hash で確定すること。
 
 (define-module (polkit-ck)
   #:use-module (guix packages)
