@@ -6,8 +6,9 @@
 ;;; "No session for cookie" で落ちるため、台帳係だけを ConsoleKit2 に
 ;;; 任せる構成。
 ;;;
-;;; 注意: 叩き台 (未検証)。consolekit2 の sha256 はプレースホルダで、
-;;; 採用時に guix hash で確定すること。
+;;; 注意: 叩き台。パッケージのビルドは 2026-11-23 に laptop で確認済み
+;;; (consolekit2 / polkit-ck とも成功)。OS 設定への組み込みと、実際に
+;;; 認証が通るかは未検証。
 
 (define-module (polkit-ck)
   #:use-module (guix packages)
@@ -20,7 +21,7 @@
   #:use-module (gnu packages compression)
   #:use-module (gnu packages gettext)
   #:use-module (gnu packages glib)
-  #:use-module (gnu packages gtk-doc)
+  #:use-module (gnu packages gtk)
   #:use-module (gnu packages linux)
   #:use-module (gnu packages pkg-config)
   #:use-module (gnu packages polkit)
@@ -38,10 +39,10 @@
               (commit version)))
        (file-name (git-file-name name version))
        (sha256
-        ;; プレースホルダ。採用時に下記で得た値へ置き換えること。
-        ;;   git clone https://github.com/ConsoleKit2/ConsoleKit2
-        ;;   guix hash -rx ConsoleKit2
-        (base32 "0000000000000000000000000000000000000000000000000000"))))
+        ;; 1.2.7 タグのチェックアウトを guix hash -rx で測った値。
+        ;; なおタグの中身の configure.ac の版表記は 1.2.6 のまま
+        ;; (上流が上げ忘れたとみられる)。
+        (base32 "1fgnwhqvzjy4yg8xg76fiabamb7jnhvznjj9dxpqlzl1lhpsd6vd"))))
     (build-system gnu-build-system)
     (arguments
      (list #:tests? #f            ;チェック用のスイートは同梱されていない
@@ -62,10 +63,20 @@
                ;;  autoreconf は冪等なので害はない)
                (add-after 'unpack 'autoreconf
                  (lambda _
+                   ;; data/Makefile.am のログ置き場を作る install 規則は
+                   ;; localstatedir (/var) をそのまま使うので、サンドボックス
+                   ;; 内で書けるよう出力先の中に逃がす。コンパイル時や
+                   ;; 設定ファイルに埋まる localstatedir は /var のまま。
+                   (substitute* "data/Makefile.am"
+                     (("\\$\\(DESTDIR\\)\\$\\(localstatedir\\)/log/ConsoleKit")
+                      "$(DESTDIR)$(prefix)/var/log/ConsoleKit"))
+                   ;; doc の Makefile.am が gtk-doc.make を include するので、
+                   ;; autoreconf の前に gtkdocize で雛形をコピーしておく。
+                   (invoke "gtkdocize")
                    (invoke "autoreconf" "-vfi"))))))
     (native-inputs
      ;; autoreconf 時に configure.ac が参照するマクロの供給元。
-     ;; マクロ不足で転んだら、不足分をここへ足す (README.md 参照)。
+     ;; マクロ不足で転んだら、不足分をここへ足す。
      (list autoconf
            automake
            libtool
@@ -73,7 +84,9 @@
            gettext-minimal
            gtk-doc
            gobject-introspection
-           pkg-config))
+           pkg-config
+           ;; gdbus-codegen と glib-genmarshal がビルド時に要る。
+           (list glib "bin")))
     (inputs
      (list glib
            dbus
