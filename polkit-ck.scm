@@ -6,9 +6,14 @@
 ;;; "No session for cookie" で落ちるため、台帳係だけを ConsoleKit2 に
 ;;; 任せる構成。
 ;;;
-;;; 注意: 叩き台。パッケージのビルドは 2026-11-23 に laptop で確認済み
-;;; (consolekit2 / polkit-ck とも成功)。OS 設定への組み込みと、実際に
-;;; 認証が通るかは未検証。
+;;; 注意: パッケージのビルドは 2026-11-23 に laptop で確認済み
+;;; (consolekit2 / polkit-ck とも成功)。同日デスクトップへ組み込み、
+;;; セッション登録 (active) と GetSessionForCookie /
+;;; GetSessionForUnixProcess の照合成功まで確認済み。認証の完走には
+;;; グラフィカルエージェントが要り、polkit-gnome は素の polkit
+;;; (logind 版モニタ) にリンクするため polkit-gnome/ck を使う。
+;;; pkexec 内蔵のテキストエージェントは応答段で "No session for
+;;; cookie" になる (登録が root 権限経由のためとみられる)。
 
 (define-module (polkit-ck)
   #:use-module (guix packages)
@@ -128,3 +133,15 @@
      (modify-inputs (package-inputs polkit)
        ;; ConsoleKit 追跡では logind 系ライブラリは使わない。
        (delete "elogind")))))
+
+(define-public polkit-gnome/ck
+  (package/inherit polkit-gnome
+    (name "polkit-gnome-ck")
+    (inputs
+     (modify-inputs (package-inputs polkit-gnome)
+       ;; エージェントは自分のセッションを libpolkit-gobject の
+       ;; セッションモニタで引く。素の polkit のモニタは logind 版
+       ;; なので、elogind の無い環境では "Unable to determine the
+       ;; session we are in" になって登録できない。ConsoleKit 版
+       ;; モニタの polkit/ck に差し替える。
+       (replace "polkit" polkit/ck)))))
