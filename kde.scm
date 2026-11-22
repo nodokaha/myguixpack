@@ -55,6 +55,7 @@
 (define-module (kde)
   #:use-module (gnu packages)
   #:use-module (gnu packages kde-frameworks)
+  #:use-module (gnu packages kde-graphics)
   #:use-module (guix packages)
   #:use-module (guix utils)
   #:use-module (srfi srfi-1))
@@ -129,6 +130,12 @@
 
 ;;; --- krita --------------------------------------------------------
 
+;;; NOTE: reference the krita / kio-5 variables directly, never via
+;;; specification->package.  Once this module is a Guix channel,
+;;; specification->package folds over all package modules -- including
+;;; this one, while it is still loading -- and the load dies with
+;;; "No variable named krita/fixed in #<interface (kde)>".
+
 (define-public krita/fixed
   ;; krita with the three stock objects replaced by the fixed
   ;; variants above (identity-based rewriting, applied
@@ -139,14 +146,14 @@
       (,kdbusaddons-5 . ,kdbusaddons-5/fixed)
       (,stock-kinit-bootstrap . ,kinit-bootstrap/fixed))
     #:recursive? #t)
-   (specification->package "krita")))
+   krita))
 
 ;;; --- standalone variant, for direct use / debugging --------------
 ;;;   guix build -L <this-repo> kio-no-tests
 ;;; NOTE: installing this alone does not fix krita; krita must be
 ;;; the rewritten variant above so its whole graph uses it.
 (define-public kio-5-no-tests
-  (let ((orig (specification->package "kio@5.116.0")))
+  (let ((orig kio-5))
     (package
       (inherit orig)
       (name "kio-no-tests")
