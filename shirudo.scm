@@ -3,7 +3,14 @@
 ;;; 上流: https://github.com/shirudo-dev/shirudo
 ;;; ライセンスは BSD-2-Clause（BPF プログラムは BSD/GPL デュアル）。
 ;;;
-;;; 状態（2026-11-24 調査時点）:
+;;; 状態（2026-11-24 調査時点。ビルド検証は 2026-11-25 完了）:
+;;;   * 2026-11-25、laptop の Guix（c9d72ff、オフロード先の自宅
+;;;     サーバーで実行）でサンドボックスビルドが完走した。
+;;;     成果物: bin/shirudo、bin/shirudo-quote-check、
+;;;     libexec/shirudo/{shirudo-build,gen-image}、
+;;;     share/shirudo/vmlinux.h（99,045 行、BTF から生成）。
+;;;     `shirudo --help` の起動も確認済み。残る TODO は LuaJIT の
+;;;     GC64 要件と実行時ツール依存の配線のみ（ビルドは通る）。
 ;;;   * 正式リリース（リリースタグ／ソース tarball）はまだ無い。
 ;;;     GitHub Releases にあるのは CI のテストカーネル成果物
 ;;;     （"Test kernel build …"、タグ test-kernel-*）だけで、
@@ -29,8 +36,10 @@
 ;;;   しかも内蔵オブジェクトは署名付きローダ ABI（prog->aux->sig）を
 ;;;   読むため、その ABI を持つ bpf-next 系カーネルの BTF でないと
 ;;;   コンパイルできない（上流ドキュメント「System requirements」）。
-;;;   BTF 無しでビルドすると gen-vmlinux-h が落ちる（終了コード 139。
-;;;   2026-11-24、Muse VM で確認）。
+;;;   （注: 2026-11-24 に VM で見た「BTF が無いと gen-vmlinux-h が
+;;;   139 で落ちる」という観察は、後に (glibc "static") 起因の
+;;;   起動時セグフォールトだったと判明した。引数なしでも落ちる
+;;;   ため BTF の有無とは無関係。2026-11-25 に訂正。）
 ;;;   供給方法: 上流 CI テストカーネルのリリース zip
 ;;;   （test-kernel-45212180772、kernel-packages-x86-64-ci.zip）に
 ;;;   vmlinux-7.4-shirudo-ci-20261123.btf がそのまま入っている。
@@ -60,9 +69,11 @@
 ;;;       ビルドを止め（Makefile 側の ?= を上書きできる）、inputs に
 ;;;       (openssl "static") を入れてリンク時に libcrypto.a が
 ;;;       見つかるようにする。
-;;;     → -static-pie に要る glibc 側の静的部品として (glibc "static")
-;;;       も入れたが、Guix で静的 PIE がそのままリンクできるかは
-;;;       未確認（TODO: laptop で確認）。
+;;;     → 当初 -static-pie 用に (glibc "static") も入れていたが、
+;;;       サンドボックスで ld が暗黙の -lc に libc.a を選んでしまい
+;;;       gen-vmlinux-h が起動時セグフォールトする実害が出たため
+;;;       外した（2026-11-25、laptop で特定。詳細は inputs 側の
+;;;       コメント参照）。
 ;;;     → 同じパッケージの複数出力（openssl と (openssl "static")）を
 ;;;       併記する書き方がこれでよいかも未確認（TODO: ラベル重複）。
 ;;;   * 版数刻印は Makefile.version が git describe で行う。
@@ -231,7 +242,18 @@
     (inputs
      (list curl
            elfutils
-           (list glibc "static")   ; quote-check の -static-pie 用
+           ;; (glibc "static") は入れない。サンドボックスの
+           ;; LIBRARY_PATH で glibc の lib（libc.so スクリプト）より
+           ;; 先に static 出力（libc.a のみ）が来ると、ld が暗黙の
+           ;; -lc に libc.a を選んでしまい、動的リンクのつもりの
+           ;; バイナリへ glibc の静的スタートアップが混入する。
+           ;; 実害: ホストツール gen-vmlinux-h が起動直後に
+           ;; セグフォールトし、GEN vmlinux.h が Error 139 で
+           ;; 落ちた（2026-11-25、laptop で特定。NEEDED に
+           ;; libc.so.6 が無く、__libc_start_main が実行ファイル
+           ;; 内に定義されているのが目印）。quote-check は
+           ;; QUOTE_CHECK_OPENSSL= で止めてあるので静的 glibc は
+           ;; 不要。
            luajit
            openssl
            (list openssl "static") ; quote-check の libcrypto.a 用
